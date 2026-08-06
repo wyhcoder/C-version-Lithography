@@ -1,0 +1,42 @@
+# =====================================================
+# 仿真系统级参数 (Simulation System)
+# =====================================================
+PATTERN_NAME: &PATTERN_NAME "工字型"   # 对应 target_pattern/matrix_0525.bmp
+
+system:
+  wavelength_nm: 193.0
+  pixel_size_nm: 4.0
+  grid_size_pixel: 257
+
+# =====================================================
+# 掩模版参数 (Mask)
+# =====================================================
+mask:
+  image_name: *PATTERN_NAME      # 默认读取 pattern_data 文件夹下的 .bmp
+  row_grid_size: 256
+# =====================================================
+# 光学系统参数 (Optics)
+# =====================================================
+optics:
+  na: 1.35
+  refractive_index: 1.44         # 物镜空间折射率 n
+  aberrations:
+    {4: 0.0}                    # Zernike 像差项
+
+# =====================================================
+# 光源参数 (Source)
+# =====================================================
+source:
+  type: "annular"                # conventional / annular / dipole / quasar
+  sigma_in: 0.6
+  sigma_out: 0.9
+
+# =====================================================
+# 光刻胶模型参数 (Resist Model)
+# =====================================================
+resist:
+  model: "threshold"             # threshold / sigmoid
+  threshold: 0.25
+  alpha: 85
+
+
