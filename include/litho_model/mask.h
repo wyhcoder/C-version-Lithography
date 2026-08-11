@@ -11,7 +11,7 @@ public:
     // 从图片文件构造（归一化到 [0,1]）
     static std::optional<Mask> from_file(const std::string& path, int size,
                                          bool normalize = true);
-
+    // 构造函数，从BMP得到归一化的掩模矩阵
     Mask(const std::string& path, int size, bool normalize = true);
 
     // 从矩阵直接构造（测试用，不依赖图片文件）
