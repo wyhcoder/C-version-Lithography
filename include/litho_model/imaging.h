@@ -1,35 +1,30 @@
 #pragma once
 
 #include <Eigen/Dense>
-#include <vector>
-#include "litho_prepare.h"
 
-typedef double fftw_complex[2];
-typedef struct fftw_plan_s* fftw_plan;
+#include <vector>
+
+#include "litho_prepare.h"
 
 namespace litho {
 
-
-struct Imaging_Result{
+struct Imaging_Result {
     Eigen::MatrixXd aerial_image;
     Eigen::MatrixXd wafer_image;
 };
+
 class Imaging {
 public:
     explicit Imaging(const ImagingCache& cache);
     ~Imaging();
 
-    // ── 成像方法 ─────────────────────────────────────────────────
-    // Abbe（精确, 慢）: 对每个光源点单独累加
-   
+    Imaging(const Imaging&) = delete;
+    Imaging& operator=(const Imaging&) = delete;
 
-   
-
-    
     // 光刻胶显影
     Imaging_Result compute(const Eigen::MatrixXd& mask,
-                                  double threshold = 0.25,
-                                  double alpha      = 50);
+                           double threshold = 0.25,
+                           double alpha = 50.0);
 
     // ── 计算的中间变量 ──────────────────────────────────────────────
     // 返回 const 引用，避免每次 CTM 迭代复制全部 K 个复电场
@@ -38,24 +33,17 @@ public:
     }
 
 private:
-   
-
-
-
     const ImagingCache& _cache;
 
-    // ── FFTW 资源 (Abbe 用) ────────────────────────────────────
-    fftw_complex* _fft_in;
-    fftw_complex* _fft_out;
-    fftw_plan     _plan_fwd;
-    fftw_plan     _plan_inv;
+    // FFTW 输入、输出缓冲区及正/逆变换计划。
+    fftw_complex* _fft_in = nullptr;
+    fftw_complex* _fft_out = nullptr;
+    fftw_plan _plan_fwd = nullptr;
+    fftw_plan _plan_inv = nullptr;
 
-
-
-    // ── 中间缓冲 ────────────────────────────────────────────────
-    mutable std::vector<Eigen::MatrixXcd> _electric_field;
-    mutable Eigen::MatrixXcd _MASK,_PSF,_TEMP, _E;
-    mutable Eigen::MatrixXd  _I_s;
+    // 最近一次成像计算的频域掩模和各核复电场。
+    std::vector<Eigen::MatrixXcd> _electric_field;
+    Eigen::MatrixXcd _mask_frequency;
 };
 
 }  // namespace litho

@@ -7,6 +7,9 @@
 #include <iostream>
 #include <opencv2/objdetect.hpp>
 #include <stdexcept>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace litho {
 
@@ -163,6 +166,7 @@ void LithoPrepare::_compute_psf_vectors() {
 
     _cache.psf_vectors_spatial.resize(Ns);
     _cache.psf_vectors_frequence.resize(Ns);
+    // 匿名函数
     auto H_at = [&](int r, int c) -> std::complex<double> {
         if (r < 0 || r >= N || c < 0 || c >= N) return {0.0, 0.0};
         return H(r, c);
@@ -271,8 +275,7 @@ void LithoPrepare::_compute_socs_kernels(){
 
     // ── 2. Thin SVD: A = U Σ Vᴴ ─────────────────────────────────────
     // BDCSVD 比 JacobiSVD 快 10-100 倍，精度对成像足够
-    Eigen::BDCSVD<Eigen::MatrixXcd> svd(A,
-        Eigen::ComputeThinU | Eigen::ComputeThinV);
+    Eigen::BDCSVD<Eigen::MatrixXcd,Eigen::ComputeThinU> svd(A);
     const auto& U = svd.matrixU();          // [N² × Ns]
     const auto& S = svd.singularValues();   // [Ns]，降序
 
@@ -286,11 +289,19 @@ void LithoPrepare::_compute_socs_kernels(){
     // 统计能量占比
     double total_energy = 0.0, top_energy = 0.0;
     for (int k = 0; k < S.size(); ++k) total_energy += S(k) * S(k);
+
+    #ifdef _OPENMP
+    std::cout << "OpenMP 已启用，版本：" << _OPENMP << '\n';
+    #else
+    std::cout << "OpenMP 未启用，当前为单线程\n";
+    #endif
+
     #pragma omp parallel
     {
         fftw_complex* local_in = fftw_alloc_complex(N * N);
         fftw_complex* local_out = fftw_alloc_complex(N * N);
         
+        // 为分配循环任务，reduction避免公共的 top_energy 发生数据冲突，schedule(static) 表示静态分配的线程数
         #pragma omp for reduction(+:top_energy) schedule(static)
         
         for (int k = 0; k < K_use; ++k){

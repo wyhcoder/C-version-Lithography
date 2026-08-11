@@ -28,10 +28,6 @@ struct SourceParams {
 };
 
 
-
-
-
-
 struct AxisEdges {
     Eigen::VectorXd edges;
     Eigen::VectorXd widths;
@@ -50,7 +46,7 @@ struct AxisEdges {
 // };
 struct SourceMap {
     Eigen::VectorXd source_coords;
-    Eigen::MatrixXd source_weight_map;
+    Eigen::MatrixXd source_weight_map; // 还没有归一化的光源点的强度
 };
 
 

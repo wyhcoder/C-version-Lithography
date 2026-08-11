@@ -54,7 +54,7 @@ public:
     const ImagingCache& cache() const { return _cache; }
 
 private:
-    // 从 source_weight_map 中提取非零采样点，转换为物理频率
+    // 从 source_weight_map 中提取非零采样点，转换为物理频率，数据结构的大小依据非零光源点决定
     void _extract_source_points(const SourceMap& smap,
                                 double f_max = 1.0,
                                 double min_weight = 1e-8);

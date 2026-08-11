@@ -17,7 +17,9 @@ struct Params {
 
 class Pupil {
 public:
+    // 构造函数，直接计算出光瞳函数
     Pupil(const Params& params, const Eigen::MatrixXd& fx, const Eigen::MatrixXd& fy);
+    // 计算光瞳函数
     void compute_pupil();
 
     const Eigen::MatrixXd&  get_amplitude() const { return _amplitude; }

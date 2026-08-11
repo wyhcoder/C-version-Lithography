@@ -39,7 +39,7 @@ void Pupil::_wavefront(const std::unordered_map<int, double>& coeffs) {
 // }
 
 void Pupil::compute_pupil() {
-    _phase = _w_static ;
+    _phase = _w_static ;// 泽尼克相差
     Eigen::MatrixXcd exp_i_phase =
         (_phase.array() * std::complex<double>(0.0, 2.0 * M_PI)).exp();
     _pupil = _amplitude.array().cast<std::complex<double>>() * exp_i_phase.array();
