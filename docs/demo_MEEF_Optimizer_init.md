@@ -2,7 +2,7 @@
 
 `demo/demo_MEEF_Optimizer_init.cpp` 是 MEEF_Optimizer 的集成测试 demo，支持三种运行模式：初始化测试、MEEF 矩阵构建、完整优化流程。
 
-## 1. 编译
+# 1. 编译
 
 在项目根目录下执行（任选一个 build 目录）：
 
@@ -21,14 +21,15 @@ cmake --build build-release --target demo_MEEF_Optimizer_init -j
 ./demo_MEEF_Optimizer_init [config] [lsm_mask] [save_path] [mode] [iter] [--wepe-only]
 ```
 
-| 位置 | 参数        | 默认值                                          | 说明                          |
-|------|-------------|-------------------------------------------------|-------------------------------|
-| argv[1] | config      | `config.yaml`                                   | 仿真参数 YAML                 |
-| argv[2] | lsm_mask    | `assets/lsm_mask/ls_image工字型.txt`            | 初始 LSM 掩模                 |
-| argv[3] | save_path   | `result/MEEF_result/test`                       | 输出目录                      |
-| argv[4] | mode        | `--init-only`                                   | 运行模式（见下）              |
-| argv[5] | iter        | `100`                                           | 优化迭代次数（仅 `--optimize` 生效） |
-| argv[6] | --wepe-only | （不启用）                                      | WEPE-only 开关（仅 `--optimize` 生效） |
+
+| 位置    | 参数        | 默认值                               | 说明                                  |
+| ------- | ----------- | ------------------------------------ | ------------------------------------- |
+| argv[1] | config      | `config.yaml`                        | 仿真参数 YAML                         |
+| argv[2] | lsm_mask    | `assets/lsm_mask/ls_image工字型.txt` | 初始 LSM 掩模                         |
+| argv[3] | save_path   | `result/MEEF_result/test`            | 输出目录                              |
+| argv[4] | mode        | `--init-only`                        | 运行模式（见下）                      |
+| argv[5] | iter        | `100`                                | 优化迭代次数（仅`--optimize` 生效）   |
+| argv[6] | --wepe-only | （不启用）                           | WEPE-only 开关（仅`--optimize` 生效） |
 
 > ⚠️ 因为是位置参数，`mode` 必须出现在第 4 个位置。不能跳过前三个参数直接传 `--optimize`，否则 `--optimize` 会被当成 `config` 路径，报「配置文件不存在」。
 
@@ -67,57 +68,82 @@ cmake --build build-release --target demo_MEEF_Optimizer_init -j
 
 两种 EP 模式的区别（对应 `MEEFPipelineConfig.optimize_wepe_only`）：
 
-| 模式          | MEEF 矩阵列来源        | 说明                         |
-|---------------|------------------------|------------------------------|
-| 全 EP 点（默认） | 所有 edge points       | 覆盖完整轮廓                 |
-| `--wepe-only` | 仅 WEPE 关键点         | 只在加权关键点上优化，更快   |
 
-## 4. 内置默认配置
+| 模式             | MEEF 矩阵列来源  | 说明                       |
+| ---------------- | ---------------- | -------------------------- |
+| 全 EP 点（默认） | 所有 edge points | 覆盖完整轮廓               |
+| `--wepe-only`    | 仅 WEPE 关键点   | 只在加权关键点上优化，更快 |
 
-demo 在代码中硬编码了 `MEEFPipelineConfig`（`demo_MEEF_Optimizer_init.cpp:103-130`），未从 YAML 读取：
+## 4. YAML 配置
 
-| 字段               | 值     | 含义                       |
-|--------------------|--------|----------------------------|
-| `pattern_name`     | 工字型 | 图案名                     |
-| `move_strategy`    | xy     | X/Y 双向扰动               |
-| `main_cp_interval` | 7      | 主图形控制点采样间隔（像素）|
-| `main_symmetry`    | none   | 不使用对称                 |
-| `sraf_cp_interval` | 5      | SRAF 控制点间隔            |
-| `sraf_min_cps`     | 8      | SRAF 最少控制点数          |
-| `sraf_min_aera`    | 50     | SRAF 最小连通面积          |
-| `msaa_level`       | 16     | MSAA 采样数                |
-| `curve_type`       | BS     | B-Spline 插值              |
-| `delta`            | 0.15   | 中心差分步长               |
-| `dilate_radius`    | 2      | 主/SRAF 分离膨胀半径       |
-| `interval_line`    | 5      | 直线段 EP 间隔             |
-| `interval_corner`  | 2      | 拐角 EP 间隔               |
-| `mid_weight`       | 4.0    | 中点 EP 权重               |
-| `other_weight`     | 1.0    | 其他 EP 权重               |
-| `step_tol`         | 0.0    | 步长收敛阈值（0=不判断）   |
-| `patience`         | 3      | 早停耐心值                 |
+`config.yaml` 中的 `meef:` 节用于配置 `MEEFPipelineConfig`。运行时会将完整的
+YAML 复制到 `meef.output_dir / meef.config_snapshot_name`，默认即
+`result/MEEF_result/test/config_used.yaml`，以便结果可复现。
 
-如需调整这些参数，直接修改 `demo_MEEF_Optimizer_init.cpp` 中对应行后重新编译。
+`output_dir` 的相对路径以项目根目录为基准；`config_snapshot_name` 和
+`console_log_name` 必须是不含目录的文件名。程序会继续向终端输出，并同时把
+`std::cout` / `std::cerr` 保存到日志文件。
+
+例如只修改配置即可指定输出目录、快照名称与迭代次数：
+
+```yaml
+meef:
+  output_dir: "result/MEEF_result/run_001"
+  config_snapshot_name: "run_001_config.yaml"
+  console_log_name: "run_001_console.log"
+  iter: 50
+  main_cp_interval: 9
+  delta: 0.10
+```
+
+可设置字段如下：
+
+
+| 字段               | 值     | 含义                         |
+| ------------------ | ------ | ---------------------------- |
+| `console_log_name` | console_output.log | 终端输出日志名称       |
+| `pattern_name`     | 工字型 | 图案名                       |
+| `move_strategy`    | xy     | X/Y 双向扰动                 |
+| `main_cp_interval` | 7      | 主图形控制点采样间隔（像素） |
+| `main_symmetry`    | none   | 不使用对称                   |
+| `sraf_cp_interval` | 5      | SRAF 控制点间隔              |
+| `sraf_min_cps`     | 8      | SRAF 最少控制点数            |
+| `sraf_min_aera`    | 50     | SRAF 最小连通面积            |
+| `msaa_level`       | 16     | MSAA 采样数                  |
+| `curve_type`       | BS     | B-Spline 插值                |
+| `delta`            | 0.15   | 中心差分步长                 |
+| `dilate_radius`    | 2      | 主/SRAF 分离膨胀半径         |
+| `interval_line`    | 5      | 直线段 EP 间隔               |
+| `interval_corner`  | 2      | 拐角 EP 间隔                 |
+| `mid_weight`       | 4.0    | 中点 EP 权重                 |
+| `other_weight`     | 1.0    | 其他 EP 权重                 |
+| `step_tol`         | 0.0    | 步长收敛阈值（0=不判断）     |
+| `patience`         | 3      | 早停耐心值                   |
+
+修改 YAML 参数后直接重新运行，无需重新编译。
 
 ## 5. 输出文件
 
 所有输出写入 `save_path`：
 
-| 文件                | 模式          | 说明                          |
-|---------------------|---------------|-------------------------------|
-| `main_cps.txt`      | 全部          | 主图形控制点                  |
-| `sraf_cps.txt`      | 全部          | SRAF 控制点                   |
-| `eps.txt`           | 全部          | edge points                   |
-| `sraf_mask.txt`     | 全部          | 分离出的 SRAF 掩模            |
-| `main_mask.txt`     | 全部          | 分离出的主图形掩模            |
-| `meef_mx.txt`       | `--build-meef`| X 方向 MEEF 矩阵              |
-| `meef_my.txt`       | `--build-meef`| Y 方向 MEEF 矩阵              |
-| `lsm_mask.txt`      | `--optimize`  | 初始 LSM 掩模（用于对比）     |
-| `lsm_wafer.txt`     | `--optimize`  | 初始 LSM 成像结果             |
-| `iterations/mask.txt`   | `--optimize` | 优化后掩模（每轮覆盖）        |
-| `iterations/wafer.txt`  | `--optimize` | 优化后成像（每轮覆盖）        |
-| `best/`             | `--optimize`  | 最优结果快照                  |
-| `errors.csv`        | `--optimize`  | 每轮 EPE/WEPE 历史            |
-| `meta.json`         | 全部          | 元信息                        |
+
+| 文件                   | 模式           | 说明                      |
+| ---------------------- | -------------- | ------------------------- |
+| `main_cps.txt`         | 全部           | 主图形控制点              |
+| `sraf_cps.txt`         | 全部           | SRAF 控制点               |
+| `eps.txt`              | 全部           | edge points               |
+| `sraf_mask.txt`        | 全部           | 分离出的 SRAF 掩模        |
+| `main_mask.txt`        | 全部           | 分离出的主图形掩模        |
+| `meef_mx.txt`          | `--build-meef` | X 方向 MEEF 矩阵          |
+| `meef_my.txt`          | `--build-meef` | Y 方向 MEEF 矩阵          |
+| `lsm_mask.txt`         | `--optimize`   | 初始 LSM 掩模（用于对比） |
+| `lsm_wafer.txt`        | `--optimize`   | 初始 LSM 成像结果         |
+| `iterations/mask.txt`  | `--optimize`   | 优化后掩模（每轮覆盖）    |
+| `iterations/wafer.txt` | `--optimize`   | 优化后成像（每轮覆盖）    |
+| `best/`                | `--optimize`   | 最优结果快照              |
+| `errors.csv`           | `--optimize`   | 每轮 EPE/WEPE 历史        |
+| `meta.json`            | 全部           | 元信息                    |
+| `console_output.log`   | 全部           | 本次运行的终端输出副本    |
 
 > `--optimize` 模式下每轮迭代会**覆盖** `iterations/`，不保留中间轮次；最优结果单独存 `best/`。
 

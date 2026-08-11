@@ -10,7 +10,9 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <streambuf>
 #include <string>
+#include <yaml-cpp/yaml.h>
 
 using namespace litho;
 
@@ -25,6 +27,68 @@ static std::string shell_quote(const std::filesystem::path& path) {
     return quoted + "'";
 }
 
+template <typename T>
+static T yaml_required(const YAML::Node& node, const char* key) {
+    if (!node || !node[key]) {
+        throw std::runtime_error("config.yaml 缺少 meef." + std::string(key));
+    }
+    return node[key].as<T>();
+}
+
+static std::filesystem::path config_relative_path(
+    const std::filesystem::path& project_root,
+    const std::string& path)
+{
+    const std::filesystem::path result(path);
+    return result.is_absolute() ? result : project_root / result;
+}
+
+// 同一份输出同时写入终端与日志文件。
+class TeeBuffer final : public std::streambuf {
+public:
+    TeeBuffer(std::streambuf* terminal, std::streambuf* log)
+        : terminal_(terminal), log_(log) {}
+
+protected:
+    int_type overflow(int_type ch) override {
+        if (traits_type::eq_int_type(ch, traits_type::eof())) {
+            return traits_type::not_eof(ch);
+        }
+        const char c = traits_type::to_char_type(ch);
+        if (traits_type::eq_int_type(terminal_->sputc(c), traits_type::eof()) ||
+            traits_type::eq_int_type(log_->sputc(c), traits_type::eof())) {
+            return traits_type::eof();
+        }
+        return ch;
+    }
+
+    int sync() override {
+        return terminal_->pubsync() == 0 && log_->pubsync() == 0 ? 0 : -1;
+    }
+
+private:
+    std::streambuf* terminal_;
+    std::streambuf* log_;
+};
+
+class ScopedStreamTee final {
+public:
+    ScopedStreamTee(std::ostream& stream, std::streambuf* log)
+        : stream_(stream), original_(stream.rdbuf()), tee_(original_, log) {
+        stream_.rdbuf(&tee_);
+    }
+
+    ~ScopedStreamTee() { stream_.rdbuf(original_); }
+
+    ScopedStreamTee(const ScopedStreamTee&) = delete;
+    ScopedStreamTee& operator=(const ScopedStreamTee&) = delete;
+
+private:
+    std::ostream& stream_;
+    std::streambuf* original_;
+    TeeBuffer tee_;
+};
+
 static void show_optimization_comparison(
     const std::filesystem::path& project_root,
     const std::filesystem::path& save_path)
@@ -36,7 +100,7 @@ static void show_optimization_comparison(
     const fs::path optimized_wafer = save_path / "iterations/wafer.txt";
 
     for (const auto& file : {lsm_mask, lsm_wafer, optimized_mask, optimized_wafer}) {
-        if (!fs::is_regular_file(file)) {
+        if (!fs::is_regular_file(file)  ) {
             throw std::runtime_error("缺少可视化结果文件: " + file.string());
         }
     }
@@ -73,33 +137,74 @@ int main(int argc, char** argv) {
     const fs::path config_path = (argc > 1)
         ? fs::path(argv[1])
         : build_dir / "config.yaml";
-    const fs::path lsm_path = (argc > 2)
-        ? fs::path(argv[2])
-        : project_root / "assets/lsm_mask/ls_image工字型.txt";
-    const fs::path save_path = (argc > 3)
-        ? fs::path(argv[3])
-        : project_root / "result/MEEF_result/test";
-
+    fs::path console_log_path;
     try {
+        if (argc > 2) {
+            throw std::invalid_argument(
+                "用法: ./demo_MEEF_Optimizer_init [config.yaml]；所有运行参数请在 YAML 的 meef 节设置");
+        }
         if (!fs::is_regular_file(config_path)) {
             throw std::runtime_error("配置文件不存在: " + config_path.string());
         }
+
+        const YAML::Node root = YAML::LoadFile(config_path.string());
+        const YAML::Node meef_yaml = root["meef"];
+        if (!meef_yaml || !meef_yaml.IsMap()) {
+            throw std::runtime_error("config.yaml 缺少 meef 配置节");
+        }
+        const fs::path lsm_path = config_relative_path(
+            project_root, yaml_required<std::string>(meef_yaml, "lsm_mask_path"));
+        const fs::path save_path = config_relative_path(
+            project_root, yaml_required<std::string>(meef_yaml, "output_dir"));
+        const std::string config_snapshot_name = yaml_required<std::string>(
+            meef_yaml, "config_snapshot_name");
+        const std::string console_log_name = yaml_required<std::string>(
+            meef_yaml, "console_log_name");
+        const std::string mode = yaml_required<std::string>(meef_yaml, "run_mode");
+        const std::string pattern_name = yaml_required<std::string>(
+            meef_yaml, "pattern_name");
+        const fs::path target_path =
+            build_dir / "target_pattern" / (pattern_name + ".bmp");
         if (!fs::is_regular_file(lsm_path)) {
             throw std::runtime_error("LSM mask 不存在: " + lsm_path.string());
         }
+        if (!fs::is_regular_file(target_path)) {
+            throw std::runtime_error("YAML 指定的 target 不存在: " + target_path.string());
+        }
+        if (config_snapshot_name.empty() || fs::path(config_snapshot_name).has_parent_path()) {
+            throw std::invalid_argument(
+                "meef.config_snapshot_name 必须是不含目录的文件名");
+        }
+        if (console_log_name.empty() || fs::path(console_log_name).has_parent_path()) {
+            throw std::invalid_argument(
+                "meef.console_log_name 必须是不含目录的文件名");
+        }
+        fs::create_directories(save_path);
+        const fs::path config_snapshot = save_path / config_snapshot_name;
+        fs::copy_file(config_path, config_snapshot, fs::copy_options::overwrite_existing);
+        console_log_path = save_path / console_log_name;
+        std::ofstream console_log(console_log_path, std::ios::out | std::ios::trunc);
+        if (!console_log) {
+            throw std::runtime_error("无法写入终端日志: " + console_log_path.string());
+        }
+        ScopedStreamTee stdout_tee(std::cout, console_log.rdbuf());
+        ScopedStreamTee stderr_tee(std::cerr, console_log.rdbuf());
 
         std::cout << "========== MEEF_Optimizer 初始化测试 ==========\n"
                   << "config    : " << config_path << '\n'
-                  << "target    : assets/target_pattern/工字型.bmp\n"
+                  << "target    : " << target_path << '\n'
                   << "lsm mask  : " << lsm_path << '\n'
-                  << "save path : " << save_path << "\n\n";
+                  << "save path : " << save_path << '\n'
+                  << "config copy: " << config_snapshot << '\n'
+                  << "console log: " << console_log_path << "\n\n";
 
         auto t0 = std::chrono::steady_clock::now();
         
 
         SimulationParameters params =
             SimulationParameters::from_yaml(config_path.string());
-        params.mask.image_name = "工字型";
+        // meef.pattern_name 是本 demo 唯一的 target 名称来源。
+        params.mask.image_name = pattern_name;
 
         LithographySimulator simulator(params);
         auto t1 = std::chrono::steady_clock::now();
@@ -110,33 +215,31 @@ int main(int argc, char** argv) {
         auto t2 = std::chrono::steady_clock::now();
 
         MEEFPipelineConfig meef_config{};
-        meef_config.pattern_name = "工字型";
+        meef_config.pattern_name = pattern_name;
         meef_config.ls_mask_path = lsm_path.string();
         meef_config.save_file_path = save_path.string();
-        meef_config.move_strategy = "xy";
-        meef_config.iter = (argc > 5) ? std::stoi(argv[5]) : 100;
-        meef_config.step_tol = 0.0;
-        meef_config.patience = 3;
+        meef_config.move_strategy = yaml_required<std::string>(meef_yaml, "move_strategy");
+        meef_config.iter = yaml_required<int>(meef_yaml, "iter");
+        meef_config.step_tol = yaml_required<double>(meef_yaml, "step_tol");
+        meef_config.patience = yaml_required<int>(meef_yaml, "patience");
 
-        meef_config.main_cp_interval = 7;
-        meef_config.main_symmetry = "none";
+        meef_config.main_cp_interval = yaml_required<int>(meef_yaml, "main_cp_interval");
+        meef_config.main_symmetry = yaml_required<std::string>(meef_yaml, "main_symmetry");
 
-        // 当前 C++ 配置字段名为 sraf_cp_interval；这里取用户配置的 5 像素间隔。
-        meef_config.sraf_cp_interval = 5;
-        meef_config.sraf_min_cps = 8;
-        meef_config.sraf_min_aera = 50;
+        meef_config.sraf_cp_interval = yaml_required<int>(meef_yaml, "sraf_cp_interval");
+        meef_config.sraf_min_cps = yaml_required<int>(meef_yaml, "sraf_min_cps");
+        meef_config.sraf_min_aera = yaml_required<int>(meef_yaml, "sraf_min_aera");
 
-        meef_config.msaa_level = 16;
-        meef_config.curve_type = "BS";
-        meef_config.delta = 0.15;
-        meef_config.dilate_radius = 2;
+        meef_config.msaa_level = yaml_required<int>(meef_yaml, "msaa_level");
+        meef_config.curve_type = yaml_required<std::string>(meef_yaml, "curve_type");
+        meef_config.delta = yaml_required<double>(meef_yaml, "delta");
+        meef_config.dilate_radius = yaml_required<int>(meef_yaml, "dilate_radius");
 
-        meef_config.interval_line = 5;
-        meef_config.interval_corner = 2;
-        meef_config.mid_weight = 4.0;
-        meef_config.other_weight = 1.0;
-        meef_config.optimize_wepe_only =
-            (argc > 6 && std::string(argv[6]) == "--wepe-only");
+        meef_config.interval_line = yaml_required<int>(meef_yaml, "interval_line");
+        meef_config.interval_corner = yaml_required<int>(meef_yaml, "interval_corner");
+        meef_config.mid_weight = yaml_required<double>(meef_yaml, "mid_weight");
+        meef_config.other_weight = yaml_required<double>(meef_yaml, "other_weight");
+        meef_config.optimize_wepe_only = yaml_required<bool>(meef_yaml, "optimize_wepe_only");
 
         std::cout << "MEEF EP mode: "
                   << (meef_config.optimize_wepe_only
@@ -146,14 +249,17 @@ int main(int argc, char** argv) {
 
         MEEF_Optimizer optimizer(simulator, cache, meef_config);
         auto t3 = std::chrono::steady_clock::now();
+        const auto task_start = t3;
+        auto task_end = task_start;
+        std::string task_label = "init-only";
+        bool open_comparison = false;
 
-        // 第 4 个可选参数传 --build-meef 时，实际构建并保存 Mx/My。
-        // 默认只测试初始化，避免每次运行都执行 4*num_cps 次光刻仿真。
-        const std::string mode = (argc > 4) ? argv[4] : "--init-only";
         if (mode == "--build-meef") {
+            task_label = "build MEEF matrix";
             auto meef_start = std::chrono::steady_clock::now();
             MEEFMatrixXY meef = optimizer.build_meef_matrix_xy();
             auto meef_end = std::chrono::steady_clock::now();
+            task_end = meef_end;
 
             auto save_matrix = [&](const fs::path& path,
                                    const Eigen::MatrixXd& matrix) {
@@ -182,27 +288,34 @@ int main(int argc, char** argv) {
                       << std::chrono::duration<double>(meef_end - meef_start).count()
                       << " s\n";
         } else if (mode == "--optimize") {
+            task_label = "optimization";
             std::cout << "\n--- 完整 MEEF 优化测试 ---\n"
                       << "iterations: " << meef_config.iter << '\n';
             optimizer.optimize();
-            show_optimization_comparison(project_root, save_path);
+            task_end = std::chrono::steady_clock::now();
+            open_comparison = true;
         } else if (mode != "--init-only") {
             throw std::invalid_argument(
                 "未知运行模式: " + mode +
                 "（支持 --init-only / --build-meef / --optimize）");
         }
 
-        const auto simulator_ms =
-            std::chrono::duration<double, std::milli>(t1 - t0).count();
-        const auto prepare_ms =
-            std::chrono::duration<double, std::milli>(t2 - t1).count();
-        const auto optimizer_ms =
-            std::chrono::duration<double, std::milli>(t3 - t2).count();
+        const auto simulator_s = std::chrono::duration<double>(t1 - t0).count();
+        const auto prepare_s = std::chrono::duration<double>(t2 - t1).count();
+        const auto optimizer_init_s = std::chrono::duration<double>(t3 - t2).count();
+        const auto task_s = std::chrono::duration<double>(task_end - task_start).count();
+        const auto total_compute_s = std::chrono::duration<double>(task_end - t0).count();
 
-        std::cout << "\n--- 初始化耗时 ---\n"
-                  << "simulator      : " << simulator_ms << " ms\n"
-                  << "litho prepare  : " << prepare_ms << " ms\n"
-                  << "MEEF optimizer : " << optimizer_ms << " ms\n";
+        std::cout << "\n--- 整体计算耗时（不含可视化窗口等待）---\n"
+                  << "simulator init : " << simulator_s << " s\n"
+                  << "litho prepare  : " << prepare_s << " s\n"
+                  << "optimizer init : " << optimizer_init_s << " s\n"
+                  << task_label << " : " << task_s << " s\n"
+                  << "total compute  : " << total_compute_s << " s\n";
+
+        if (open_comparison) {
+            show_optimization_comparison(project_root, save_path);
+        }
 
         const char* expected_files[] = {
             "main_cps.txt",
@@ -229,7 +342,13 @@ int main(int argc, char** argv) {
         std::cout << "\nMEEF_Optimizer 测试完成。\n";
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "\nMEEF_Optimizer 初始化失败: " << e.what() << '\n';
+        const std::string message =
+            "\nMEEF_Optimizer 运行失败: " + std::string(e.what()) + "\n";
+        std::cerr << message;
+        if (!console_log_path.empty()) {
+            std::ofstream error_log(console_log_path, std::ios::out | std::ios::app);
+            if (error_log) error_log << message;
+        }
         return 1;
     }
 }

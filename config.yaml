@@ -39,4 +39,34 @@ resist:
   threshold: 0.25
   alpha: 85
 
+# =====================================================
+# MEEF 优化参数（demo_MEEF_Optimizer_init）
+# 所有路径相对于项目根目录；运行时会把本配置复制到输出目录。
+# =====================================================
+meef:
+  output_dir: "result/MEEF_result/test"
+  config_snapshot_name: "config_used.yaml"
+  console_log_name: "console_output.log"
+  lsm_mask_path: "assets/lsm_mask/ls_image工字型.txt"
+  run_mode: "--optimize"       # --init-only / --build-meef / --optimize
+  pattern_name: *PATTERN_NAME
+  move_strategy: "xy"
+  iter: 50
+  step_tol: 0.0
+  patience: 3
+  main_cp_interval: 7
+  main_symmetry: "none"
+  sraf_cp_interval: 5
+  sraf_min_cps: 8
+  sraf_min_aera: 50
+  msaa_level: 16
+  curve_type: "BS"
+  delta: 0.15
+  dilate_radius: 2
+  interval_line: 5
+  interval_corner: 2
+  mid_weight: 4.0
+  other_weight: 1.0
+  optimize_wepe_only: false
+
 
