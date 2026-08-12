@@ -17,6 +17,7 @@
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/opencv.hpp>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -491,14 +492,17 @@ namespace litho {
                  _best_epe, _best_epe_wepe,
                  _best_epe_cps, _best_epe_mask, _best_epe_imaging);
     }
-
-
+    // 用中心差分构建 x/y 方向的 MEEF 矩阵：
+    //   Mx(ep, cp) = [EPE(x + delta) - EPE(x - delta)] / (2 * delta)
+    //   My(ep, cp) = [EPE(y + delta) - EPE(y - delta)] / (2 * delta)
+    // 每个控制点需要执行 x+、x-、y+、y- 四次独立成像，使用 OpenMP 并行计算。
     MEEFMatrixXY MEEF_Optimizer::build_meef_matrix_xy(
         const ControlPoints& current_cps) const
     {
         const int num_eps = static_cast<int>(_eps_result.eps.rows());
 
-        // 固定全局列顺序：contour-major，再按轮廓内控制点顺序。
+        // 将“多个轮廓中的控制点”展平为一维索引。
+        // cp_indices[全局CP编号] = {轮廓编号, 轮廓内CP编号}。
         std::vector<std::pair<int, int>> cp_indices;
         for (int contour_idx = 0;
              contour_idx < static_cast<int>(current_cps.size());
@@ -509,6 +513,7 @@ namespace litho {
         }
         const int num_cps = static_cast<int>(cp_indices.size());
 
+        // 最终矩阵：行对应 EP，列对应控制点。
         MEEFMatrixXY result{
             Eigen::MatrixXd::Zero(num_eps, num_cps),
             Eigen::MatrixXd::Zero(num_eps, num_cps)};
@@ -525,52 +530,71 @@ namespace litho {
                 "MEEF_Optimizer::build_meef_matrix_xy: SRAF/target dimensions mismatch");
         }
 
-        // 每个控制点 4 个任务：x+/x-/y+/y-。行是 CP，列是 EP。
+        // 暂存四种扰动产生的 EPE。这里为了便于按任务写入，行是 CP、列是 EP；
+        // 最后计算 result 时再转换成“行是 EP、列是 CP”的 MEEF 排列。
         Eigen::MatrixXd epe_x_plus  = Eigen::MatrixXd::Zero(num_cps, num_eps);
         Eigen::MatrixXd epe_x_minus = Eigen::MatrixXd::Zero(num_cps, num_eps);
         Eigen::MatrixXd epe_y_plus  = Eigen::MatrixXd::Zero(num_cps, num_eps);
         Eigen::MatrixXd epe_y_minus = Eigen::MatrixXd::Zero(num_cps, num_eps);
 
-        const int task_count = 4 * num_cps;
+        // 每个控制点拆成 4 个任务，因此总任务数为 4 * num_cps。
         int worker_count = 1;
+        const int task_count = 4 * num_cps;
 #ifdef _OPENMP
+        // 线程数不超过任务数，也不超过 OpenMP 允许的最大线程数。
         worker_count = std::max(1, std::min(task_count, omp_get_max_threads()));
 #endif
 
-        // FFTW planner 不是线程安全的，因此按线程数在进入并行区前顺序构造
-        // Imaging；执行阶段每个 OpenMP 线程独占一套 plan/buffer。
+        // 每个线程准备一个独立 Imaging 对象。
+        // FFTW 创建 plan 的过程不是线程安全的，所以必须在进入并行区之前串行构造；
+        // 并行执行时，每个线程只使用自己的 plan 和缓冲区，避免数据竞争。
         std::vector<std::unique_ptr<Imaging>> imaging_workers;
         imaging_workers.reserve(worker_count);
         for (int i = 0; i < worker_count; ++i) {
             imaging_workers.push_back(std::make_unique<Imaging>(_cache));
         }
 
+        // OpenMP 循环中的异常不能直接安全地传播到并行区外，因此：
+        // 1. 原子变量通知其他线程停止新任务；
+        // 2. 互斥锁保护 first_error，只保存第一个错误信息；
+        // 3. 离开并行区后由主线程统一抛出异常。
         std::atomic<bool> task_failed{false};
         std::mutex error_mutex;
         std::string first_error;
 
+        // 创建 worker_count 个线程，花括号内的代码每个线程都会执行一次。
         #pragma omp parallel num_threads(worker_count)
         {
+            // 非 OpenMP 构建保持 thread_id=0，整个循环自动退化为单线程。
             int thread_id = 0;
 #ifdef _OPENMP
             thread_id = omp_get_thread_num();
 #endif
-            Imaging& imaging = *imaging_workers[thread_id]; // 解引用得到 Imaging 对象
-            ParametricDemo parametric(
-                _config.curve_type, _target_mask, _config.msaa_level);
 
+            // 线程私有资源：每个线程独占一个 Imaging 和一个曲线渲染器。
+            // imaging_workers 本身是共享容器，但不同线程访问不同元素。
+            Imaging& imaging = *imaging_workers[thread_id];
+            ParametricDemo parametric(_config.curve_type, _target_mask, _config.msaa_level);
+
+            // 动态调度：线程每次领取 1 个扰动任务；先完成的线程继续领取任务，
+            // 可降低不同曲线渲染/成像耗时造成的线程等待。
             #pragma omp for schedule(dynamic, 1)
             for (int task_idx = 0; task_idx < task_count; ++task_idx) {
+                // 某个线程失败后，其余线程跳过尚未开始的任务。
                 if (task_failed.load(std::memory_order_relaxed)) continue;
 
                 try {
-                    const int col_idx = task_idx / 4; // 列索引就是 CP 索引
-                    const int variant = task_idx % 4; // 0: x+, 1: x-, 2: y+, 3: y-
+                    // 将线性任务编号还原为“控制点编号 + 扰动方向”：
+                    // task 0~3 属于 CP0，task 4~7 属于 CP1，以此类推。
+                    const int col_idx = task_idx / 4;
+                    const int variant = task_idx % 4;
+                    // variant: 0=x+, 1=x-, 2=y+, 3=y-。
                     const bool move_x = variant < 2;
                     const double signed_delta =
                         (variant % 2 == 0) ? delta : -delta;
                     const auto [contour_idx, cp_idx] = cp_indices[col_idx];
 
+                    // 每个任务复制一份控制点，保证线程之间不会修改同一份数据。
                     ControlPoints local_cps = current_cps;
                     // 工程内控制点格式是 [y, x]：真实 x 改第 1 列，真实 y 改第 0 列。
                     const int coordinate = move_x ? 1 : 0;
@@ -579,9 +603,11 @@ namespace litho {
                     local_cps[contour_idx](cp_idx, coordinate) =
                         std::round(moved * 1e4) / 1e4;
 
+                    // 用扰动后的控制点重新生成主图形，再叠加固定不动的 SRAF。
                     Eigen::MatrixXd mask = parametric.render_curve(local_cps);
                     mask.array() += _render_sraf_mask.array();
 
+                    // 对扰动掩模执行成像，并得到所有 EP 的误差向量。
                     Imaging_Result imaging_result = imaging.compute(
                         mask,
                         _simulator._params.resist.threshold,
@@ -592,6 +618,8 @@ namespace litho {
                         _simulator._params.resist.threshold,
                         _simulator._params.system.pixel_size_nm);
 
+                    // 每个任务只写一个确定的矩阵行，其他线程写不同的行/方向，
+                    // 因此不需要互斥锁。四个临时矩阵分别保存四种扰动结果。
                     if (move_x) {
                         if (signed_delta > 0.0) {
                             epe_x_plus.row(col_idx) = epe.epe_vector;
@@ -606,6 +634,7 @@ namespace litho {
                         }
                     }
                 } catch (const std::exception& e) {
+                    // 通知其他线程停止，并在锁保护下记录第一个异常。
                     task_failed.store(true, std::memory_order_relaxed);
                     std::lock_guard<std::mutex> lock(error_mutex);
                     if (first_error.empty()) {
@@ -613,6 +642,7 @@ namespace litho {
                                       std::to_string(task_idx) + ": " + e.what();
                     }
                 } catch (...) {
+                    // 捕获非 std::exception 类型的未知异常。
                     task_failed.store(true, std::memory_order_relaxed);
                     std::lock_guard<std::mutex> lock(error_mutex);
                     if (first_error.empty()) {
@@ -624,17 +654,20 @@ namespace litho {
             }
         }
 
+        // 所有线程在并行区末尾同步；若有任务失败，现在由主线程抛出异常。
         if (task_failed.load(std::memory_order_relaxed)) {
             throw std::runtime_error(first_error.empty()
                                          ? "MEEF perturbation task failed"
                                          : first_error);
         }
 
-        // 中心差分并对齐 Python 的 6 位小数结果。
+        // 匿名函数（Lambda）：将结果四舍五入到 6 位小数，与 Python 结果对齐。
         const double inv_two_delta = 1.0 / (2.0 * delta);
         auto round6 = [](double value) {
             return std::round(value * 1e6) / 1e6;
         };
+
+        // 用四组 EPE 结果计算中心差分，得到最终 Mx 和 My。
         for (int col = 0; col < num_cps; ++col) {
             for (int ep = 0; ep < num_eps; ++ep) {
                 result.mx(ep, col) = round6(
@@ -813,9 +846,18 @@ namespace litho {
 
     }
 
+    // 执行完整 MEEF 优化：评估初始掩模、迭代更新控制点并保存结果。
     void MEEF_Optimizer::optimize(){
         namespace fs = std::filesystem;
+        // 确保结果保存目录存在。
         fs::create_directories(_config.save_file_path);
+
+        std::cout << "\n"
+                  << "==================== MEEF Optimization ====================\n"
+                  << "  Output directory : " << _config.save_file_path << '\n'
+                  << "  Move strategy    : " << _config.move_strategy << '\n'
+                  << "  Max iterations   : " << _config.iter << '\n'
+                  << "===========================================================\n";
 
         const double threshold = _simulator._params.resist.threshold;
         const double alpha = _simulator._params.resist.alpha;
@@ -826,6 +868,7 @@ namespace litho {
         ParametricDemo parametric(
             _config.curve_type, _target_mask, _config.msaa_level);
 
+        // 保存一次掩模评估产生的图像和误差指标。
         struct EvaluatedState {
             Eigen::MatrixXd mask;
             Imaging_Result imaging;
@@ -835,6 +878,7 @@ namespace litho {
             double pe = 0.0;
         };
 
+        // 匿名函数（Lambda）：对掩模成像并计算各项误差。
         auto evaluate = [&](const Eigen::MatrixXd& mask) {
             EvaluatedState state;
             state.mask = mask;
@@ -853,6 +897,7 @@ namespace litho {
             return state;
         };
 
+        // 匿名函数（Lambda）：将矩阵按文本格式保存到指定路径。
         auto save_matrix = [](const fs::path& path,
                               const Eigen::MatrixXd& matrix,
                               int precision = 6) {
@@ -871,7 +916,21 @@ namespace litho {
             }
         };
 
-        // 每次 optimize() 都从干净状态开始，允许同一对象重复运行。
+        // 匿名函数（Lambda）：按统一列宽输出一组误差指标。
+        auto print_metrics = [](const char* label,
+                                double mean_wepe,
+                                double mean_epe,
+                                double pe) {
+            std::ostringstream line;
+            line << "  " << std::left << std::setw(18) << label
+                 << std::right << std::fixed << std::setprecision(6)
+                 << " | mean_wEPE: " << std::setw(12) << mean_wepe
+                 << " | mean_EPE: " << std::setw(12) << mean_epe
+                 << " | PE: " << std::setw(12) << pe;
+            std::cout << line.str() << '\n';
+        };
+
+        // 清空上一次运行产生的历史和最优结果。
         _iteration_history.clear();
         _time_history.clear();
         _wepe_history.clear();
@@ -890,7 +949,7 @@ namespace litho {
         _best_epe_mask.resize(0, 0);
         _best_epe_imaging = {};
 
-        // 1. 保存并评估 LSM 基线。历史 iter=0 与 Python 一致记录 LSM。
+        // 1. 评估并保存 LSM 基线结果。
         EvaluatedState current = evaluate(_lsm_mask);
         save_matrix(fs::path(_config.save_file_path) / "lsm_mask.txt",
                     _lsm_mask);
@@ -906,40 +965,50 @@ namespace litho {
         _epe_history.push_back(current.epe / std::max(1, _num_eps));
         _wepe_history.push_back(current.wepe / std::max(1, _num_weps));
         _pe_history.push_back(current.pe);
-        std::cout << "LSM: mean_wEPE=" << _wepe_history.back()
-                  << " mean_EPE=" << _epe_history.back()
-                  << " PE=" << current.pe << '\n';
-        std::cout << "main_cps" << _num_main_cps <<  "sraf_cps" << _num_sraf_cps << '\n';
-        // 2. 参数化初始状态作为第 1 轮求解的当前状态。
+
+        std::cout << "\n[Baseline]\n";
+        print_metrics("LSM", _wepe_history.back(),
+                      _epe_history.back(), current.pe);
+        {
+            std::ostringstream line;
+            line << "  " << std::left << std::setw(18) << "Control points"
+                 << std::right
+                 << " | main: " << std::setw(8) << _num_main_cps
+                 << " | SRAF: " << std::setw(8) << _num_sraf_cps;
+            std::cout << line.str() << '\n';
+        }
+
+        // 2. 将参数化初始掩模作为迭代起点。
         ControlPoints current_cps = _main_control_points;
         _save_cp_history(current_cps, _config.save_file_path, 0);
         _save_curve_history(current_cps, 0);
         current = evaluate(_render_initial_mask);
-        std::cout << "Parametric initial: mean_wEPE="
-                  << current.wepe / std::max(1, _num_weps)
-                  << " mean_EPE=" << current.epe / std::max(1, _num_eps)
-                  << " PE=" << current.pe << '\n';
+
+        std::cout << "\n[Initial State]\n";
+        print_metrics("Parametric",
+                      current.wepe / std::max(1, _num_weps),
+                      current.epe / std::max(1, _num_eps),
+                      current.pe);
 
         const auto optimize_start = std::chrono::steady_clock::now();
         int below_tol_count = 0;
         int actual_iterations = 0;
 
+        // 3. 迭代构建 MEEF 矩阵并更新控制点。
         for (int iteration = 1; iteration <= _config.iter; ++iteration) {
             const auto iteration_start = std::chrono::steady_clock::now();
-            std::cout << "===== iter " << iteration
-                      << " move=" << _config.move_strategy << " =====\n";
+            std::cout << "\n[Iteration " << iteration << '/' << _config.iter
+                      << "] move=" << _config.move_strategy << '\n';
 
             if (_config.move_strategy != "xy") {
                 throw std::invalid_argument(
                     "MEEF_Optimizer::optimize currently supports move_strategy=xy only");
             }
 
-            // 当前 CP + 当前 EPE 向量构建并求解 Mx/My。
+            // 根据当前控制点构建 x、y 方向的 MEEF 矩阵。
             MEEFMatrixXY meef_matrix = build_meef_matrix_xy(current_cps);
 
-            // MEEF 形状为 [num_eps, num_cps]：权重按 EP 行广播到每一列。
-            // optimize_wepe_only=true 时，weight_epe=0 的非关键 EP 行整体归零，
-            // 因而求解只响应 weight_epe=1 的 WEPE 关键点。
+            // 匿名函数（Lambda）：按 EP 权重筛选并缩放 MEEF 矩阵。
             auto apply_meef_weight = [&](Eigen::MatrixXd& matrix) {
                 if (matrix.rows() != _eps_result.weight_meef.size() ||
                     matrix.rows() != _eps_result.weight_epe.size()) {
@@ -954,6 +1023,7 @@ namespace litho {
                         _eps_result.weight_epe.transpose().array();
                 }
 
+                // 内层匿名函数：将绝对值过小的元素置零。
                 matrix = matrix.unaryExpr(
                     [](double value) {
                         return std::abs(value) < 1e-3 ? 0.0 : value;
@@ -962,6 +1032,7 @@ namespace litho {
             apply_meef_weight(meef_matrix.mx);
             apply_meef_weight(meef_matrix.my);
 
+            // 使用 SVD 求解每个控制点的 x、y 位移。
             const Eigen::RowVectorXd e0 = current.epe_vector;
             const double lambda_x = _find_truelambadas(meef_matrix.mx, e0);
             Eigen::VectorXd delta_x = _SVD_get_delta(
@@ -975,7 +1046,7 @@ namespace litho {
                 (delta_x.array().square() + delta_y.array().square()).sqrt();
             delta_d = (delta_d.array() * 1e6).round() / 1e6;
 
-            // 先更新 CP，再渲染并评估新状态；禁止用旧 mask 评估新 CP。
+            // 更新控制点，重新渲染掩模并评估新状态。
             ControlPoints new_cps = _update_control_points(
                 current_cps, delta_x, delta_y);
             Eigen::MatrixXd new_mask = parametric.render_curve(new_cps);
@@ -996,7 +1067,7 @@ namespace litho {
                 new_state.wepe / std::max(1, _num_weps));
             _pe_history.push_back(new_state.pe);
 
-            // 最优快照必须保存 new_cps，而不是上轮 current_cps。
+            // 分别记录加权 EPE 和普通 EPE 的最优结果。
             if (new_state.wepe < _best_wepe) {
                 _best_wepe = new_state.wepe;
                 _best_wepe_epe = new_state.epe;
@@ -1014,6 +1085,7 @@ namespace litho {
                 _best_epe_imaging = new_state.imaging;
             }
 
+            // 将本轮结果作为下一轮的输入。
             current_cps = std::move(new_cps);
             current = std::move(new_state);
             _main_control_points = current_cps;
@@ -1023,22 +1095,39 @@ namespace litho {
                 delta_d.size() > 0 ? delta_d.cwiseAbs().maxCoeff() : 0.0;
             const double iter_seconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - iteration_start).count();
-            std::cout << "iter " << iteration
-                      << ": mean_wEPE=" << _wepe_history.back()
-                      << " mean_EPE=" << _epe_history.back()
-                      << " PE=" << current.pe
-                      << " |dx|max=" << delta_x.cwiseAbs().maxCoeff()
-                      << " |dy|max=" << delta_y.cwiseAbs().maxCoeff()
-                      << " |d|max=" << step_max
-                      << " time=" << iter_seconds << " s\n";
 
+            print_metrics("Result", _wepe_history.back(),
+                          _epe_history.back(), current.pe);
+            {
+                std::ostringstream line;
+                line << std::fixed << std::setprecision(6)
+                     << "  " << std::left << std::setw(18) << "Step"
+                     << std::right
+                     << " | |dx|max: " << std::setw(12)
+                     << delta_x.cwiseAbs().maxCoeff()
+                     << " | |dy|max: " << std::setw(12)
+                     << delta_y.cwiseAbs().maxCoeff()
+                     << " | |d|max: " << std::setw(12) << step_max;
+                std::cout << line.str() << '\n';
+            }
+            {
+                std::ostringstream line;
+                line << std::fixed << std::setprecision(3)
+                     << "  " << std::left << std::setw(18) << "Time"
+                     << std::right
+                     << " | iteration: " << std::setw(10) << iter_seconds << " s"
+                     << " | total: " << std::setw(10) << elapsed << " s";
+                std::cout << line.str() << '\n';
+            }
+
+            // 连续若干轮位移小于阈值时提前停止。
             if (_config.step_tol > 0.0) {
                 if (step_max < _config.step_tol) {
                     ++below_tol_count;
                     if (below_tol_count >= std::max(1, _config.patience)) {
-                        std::cout << "Converged after " << iteration
-                                  << " iterations: |d|max < "
-                                  << _config.step_tol << '\n';
+                        std::cout << "  Status             | converged: |d|max < "
+                                  << _config.step_tol << " for "
+                                  << below_tol_count << " iteration(s)\n";
                         break;
                     }
                 } else {
@@ -1047,15 +1136,21 @@ namespace litho {
             }
         }
 
+        // 4. 保存误差历史和最优结果。
         _save_history();
         _save_best_results();
-        std::cout << "MEEF optimization finished: "
-                  << actual_iterations << '/' << _config.iter
-                  << " iterations, total "
-                  << std::chrono::duration<double>(
-                         std::chrono::steady_clock::now() - optimize_start)
-                         .count()
-                  << " s\n";
+        const double total_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - optimize_start).count();
+        std::ostringstream summary;
+        summary << "\n"
+                << "==================== Optimization Summary =================\n"
+                << "  Iterations       : " << actual_iterations << '/'
+                << _config.iter << '\n'
+                << "  Total time       : " << std::fixed << std::setprecision(3)
+                << total_seconds << " s\n"
+                << "  Results saved to : " << _config.save_file_path << '\n'
+                << "===========================================================\n";
+        std::cout << summary.str();
     }
 
 
