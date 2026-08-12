@@ -486,6 +486,645 @@ FFTW planner 通常不能无保护地并发创建 plan。项目在进入 MEEF �
 
 ---
 
+## 8A. CMake 专项学习问答
+
+这一节不是让你背 CMake 命令，而是让你能解释本项目如何从 `.cpp` 变成可执行程序，并能独立排查构建错误。
+
+### CMake Q1：CMake、编译器、Make/Ninja 和链接器分别做什么？
+
+**参考回答：**
+
+CMake 是构建系统生成器，它读取 `CMakeLists.txt`，生成 Makefile 或 `build.ninja`；Make/Ninja 根据依赖关系调用编译器；编译器把每个 `.cpp` 编译成目标文件；链接器再把目标文件和 Eigen、FFTW、OpenCV、yaml-cpp、OpenMP 等依赖组合成库或可执行文件。
+
+```text
+CMakeLists.txt
+    ↓ cmake 配置
+Makefile / build.ninja
+    ↓ make / ninja
+.cpp → 编译器 → .o
+    ↓ 链接器
+liblitho_core.a + demo_MEEF_Optimizer_init
+```
+
+CMake 本身通常不直接完成 C++ 编译，它负责描述并生成构建规则。
+
+### CMake Q2：配置、构建和运行为什么是三个不同阶段？
+
+**参考回答：**
+
+配置阶段查找编译器和依赖，并生成构建文件；构建阶段只编译有变化的源码并链接目标；运行阶段才真正执行程序。
+
+```bash
+# 1. 配置
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+# 2. 构建指定目标
+cmake --build build-release \
+  --target demo_MEEF_Optimizer_init --parallel
+
+# 3. 从包含 config.yaml 和运行资源的构建目录运行
+cd build-release
+./demo_MEEF_Optimizer_init
+```
+
+修改 `.cpp` 后通常只需重新构建；修改 `CMakeLists.txt` 或依赖路径后应重新配置。
+
+### CMake Q3：`-S`、`-B`、`-G` 和 `-D` 分别是什么？
+
+**参考回答：**
+
+- `-S .`：源码目录，包含顶层 `CMakeLists.txt`。
+- `-B build-release`：构建目录，用来保存缓存、目标文件和可执行文件。
+- `-G Ninja`：选择 Ninja 生成器。
+- `-D变量=值`：给 CMake 缓存变量赋值，例如 `CMAKE_BUILD_TYPE=Release`。
+
+将构建产物放在独立的 `build-release` 中叫 out-of-source build。这样源码目录更干净，也能同时保留 Debug、Release、Sanitizer 等不同配置。
+
+### CMake Q4：本项目顶层 `CMakeLists.txt` 的主要结构是什么？
+
+**参考回答：**
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(LithoSim VERSION 1.0.0 LANGUAGES CXX)
+
+find_package(Eigen3 REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(yaml-cpp REQUIRED)
+
+add_library(litho_core STATIC ...)
+target_include_directories(litho_core PUBLIC ...)
+target_link_libraries(litho_core PUBLIC ...)
+
+add_executable(demo_MEEF_Optimizer_init ...)
+target_link_libraries(demo_MEEF_Optimizer_init PRIVATE litho_core)
+```
+
+可以分为：声明项目、设置语言标准、查找依赖、创建核心库、给核心库配置头文件和依赖、创建 demo、让 demo 链接核心库、复制运行配置和资源。
+
+### CMake Q5：为什么把公共代码做成 `litho_core` 静态库？
+
+**参考回答：**
+
+`litho_core` 集中编译成 `liblitho_core.a`，多个 demo 只需链接它，不必分别重复列出全部源码。这样模块边界更清晰，也能复用增量编译结果。
+
+```cmake
+add_library(litho_core STATIC
+    source/litho_model/imaging.cpp
+    source/optimizer/MEEF_Optimizer.cpp
+    ...
+)
+```
+
+静态库在链接时被合入可执行文件；动态库则在运行时加载，Linux 上通常是 `.so`。项目目前使用静态核心库，但 FFTW、OpenCV 等外部依赖仍可能是动态库。
+
+### CMake Q6：`PUBLIC`、`PRIVATE`、`INTERFACE` 有什么区别？
+
+**参考回答：**
+
+它们描述“当前 target 是否需要”和“链接当前 target 的下游是否也需要”。
+
+| 关键字 | 当前 target 使用 | 下游 target 继承 |
+|---|---:|---:|
+| `PRIVATE` | 是 | 否 |
+| `PUBLIC` | 是 | 是 |
+| `INTERFACE` | 否 | 是 |
+
+例如：
+
+```cmake
+target_link_libraries(litho_core
+    PUBLIC Eigen3::Eigen OpenMP::OpenMP_CXX
+    PRIVATE some_internal_library
+)
+```
+
+如果 `litho_core` 的公共头文件暴露了 Eigen 类型，那么使用这些头文件的 demo 也需要 Eigen include 路径，因此 Eigen 适合 `PUBLIC`。仅在某个 `.cpp` 内部使用的库可以设为 `PRIVATE`。
+
+### CMake Q7：为什么推荐 target-based CMake？
+
+**参考回答：**
+
+现代 CMake 应围绕 target 设置属性：
+
+```cmake
+target_include_directories(litho_core PUBLIC ...)
+target_link_libraries(litho_core PUBLIC ...)
+target_compile_features(litho_core PUBLIC cxx_std_20)
+```
+
+相比全局 `include_directories()`、`link_libraries()` 和修改 `CMAKE_CXX_FLAGS`，target-based 写法能明确依赖属于哪个目标，减少 demo 之间互相污染，也更容易导出和复用。
+
+### CMake Q8：`find_package`、`find_path` 和 `find_library` 有什么区别？
+
+**参考回答：**
+
+- `find_package(Eigen3 REQUIRED)`：查找一个完整依赖包，理想情况下得到 `Eigen3::Eigen` 这样的 imported target。
+- `find_path(... fftw3.h)`：只查找头文件目录。
+- `find_library(... fftw3)`：只查找库文件。
+
+本项目对 Eigen、OpenCV、yaml-cpp 使用 `find_package`，对 FFTW 分别查找头文件和库。更成熟的工程可以提供或引入 FFTW 的 CMake package，使调用方直接链接 `FFTW3::fftw3`，避免手工维护 include 和 library 变量。
+
+### CMake Q9：为什么链接 imported target 比手写库路径更好？
+
+**参考回答：**
+
+```cmake
+target_link_libraries(litho_core PUBLIC Eigen3::Eigen)
+```
+
+`Eigen3::Eigen` 不只是一个文件名，它还能携带 include 目录、编译定义和传递依赖。相比硬编码：
+
+```cmake
+/opt/homebrew/lib/libxxx.dylib
+```
+
+imported target 更容易跨 macOS、Linux 和不同安装路径使用。硬编码 `/opt/homebrew` 只能作为本机查找提示，不应成为跨平台工程唯一可用的路径。
+
+### CMake Q10：Debug、Release 和 RelWithDebInfo 有什么区别？
+
+**参考回答：**
+
+- Debug：优化低，包含调试信息，适合断点和变量检查。
+- Release：优化高，适合性能测量，但调试体验较差。
+- RelWithDebInfo：保留调试信息同时开启优化，适合定位 Release 性能问题。
+
+```bash
+cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build-profile -DCMAKE_BUILD_TYPE=RelWithDebInfo
+```
+
+比较 OpenMP 或 SOCS 性能时必须使用相同的 Release 类配置，不能拿 Debug 时间作结论。
+
+### CMake Q11：为什么 CMake 缓存会导致“明明换了路径却仍然报旧路径”？
+
+**参考回答：**
+
+第一次配置后，CMake 会在构建目录生成 `CMakeCache.txt`，保存源码目录、编译器和依赖路径。如果复制了旧构建目录或移动了项目，缓存中的 `CMAKE_HOME_DIRECTORY` 仍可能指向旧位置。
+
+先检查：
+
+```bash
+rg 'CMAKE_HOME_DIRECTORY|CMAKE_CXX_COMPILER' \
+  build-release/CMakeCache.txt
+```
+
+最稳妥的处理方式是新建一个构建目录重新配置：
+
+```bash
+cmake -S . -B build-release-new -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release
+```
+
+确认新目录构建成功后再处理旧构建目录，不要把 `CMakeCache.txt` 提交到 Git。
+
+### CMake Q12：`compile_commands.json` 有什么作用？
+
+**参考回答：**
+
+```cmake
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+```
+
+它让 CMake输出每个 `.cpp` 的真实编译命令，包括编译器、宏、语言标准和头文件目录。VS Code、clangd 和静态分析工具可以读取它，从而与实际构建保持一致。
+
+如果项目能编译但 IDE 把 `Eigen/Dense` 标红，应检查：
+
+```bash
+rg 'eigen3|fopenmp' build-release/compile_commands.json
+```
+
+这属于编辑器配置问题，不一定是编译错误。
+
+### CMake Q13：为什么推荐 `cmake --build`，而不是直接写 `make`？
+
+**参考回答：**
+
+```bash
+cmake --build build-release --target demo_MEEF_Optimizer_init --parallel
+```
+
+这是生成器无关的命令：底层使用 Make 时会调用 Make，使用 Ninja 时会调用 Ninja。直接执行 `make` 只适用于 Makefile 生成器，而且通常要求当前目录就是构建目录。
+
+### CMake Q14：`configure_file` 和 `file(COPY ...)` 在项目里做什么？
+
+**参考回答：**
+
+项目需要在运行时读取 `config.yaml` 和目标图形，因此配置阶段会把它们复制到构建目录：
+
+```cmake
+configure_file(
+    ${CMAKE_SOURCE_DIR}/config.yaml
+    ${CMAKE_BINARY_DIR}/config.yaml
+    COPYONLY
+)
+
+file(COPY
+    ${CMAKE_SOURCE_DIR}/assets/target_pattern
+    DESTINATION ${CMAKE_BINARY_DIR}
+)
+```
+
+这样从 `build-release` 运行 demo 时，相对路径能够找到资源。长期来看，更稳健的做法是由命令行或配置明确传入资源路径，并增加 install 规则。
+
+### CMake Q15：如何把测试接入 CMake/CTest？
+
+**参考回答：**
+
+```cmake
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(test_fft tests/test_fft.cpp)
+    target_link_libraries(test_fft PRIVATE litho_core)
+    add_test(NAME fft_roundtrip COMMAND test_fft)
+endif()
+```
+
+然后执行：
+
+```bash
+cmake --build build-release --parallel
+ctest --test-dir build-release --output-on-failure
+```
+
+当前项目执行 `ctest` 会显示没有测试，说明下一步应把 FFT、SOCS、EPE 和 MEEF 数值回归接入 CTest，而不是只依赖 demo 能运行。
+
+### CMake Q16：遇到构建错误应按什么顺序排查？
+
+**参考回答：**
+
+1. 配置错误：检查 `find_package`、依赖安装和 CMake 缓存。
+2. 编译错误：看第一条 `error:`，检查头文件、类型和宏。
+3. 链接错误：看到 `undefined reference` 时检查目标是否链接了实现所在的库。
+4. 运行时动态库错误：Linux 使用 `ldd` 检查 `.so` 是否能找到。
+5. IDE 标红但能编译：检查 `compile_commands.json` 和编辑器配置。
+
+不要从最后一条连锁错误开始修，通常第一条错误最接近根因。
+
+### CMake 专项实操
+
+完成下面练习才算真正掌握：
+
+1. 分别创建 `build-debug` 和 `build-release`，解释生成文件为何不能混用。
+2. 只构建 `demo_MEEF_Optimizer_init`，观察哪些 `litho_core` 源文件被增量编译。
+3. 修改一个 `.cpp` 后重新构建，解释为什么其他文件没有重新编译。
+4. 在 `compile_commands.json` 中找到 `imaging.cpp` 的完整编译命令。
+5. 添加一个最小 `test_fft`，通过 `ctest` 执行。
+6. 在 Linux 上移除本机 `/opt/homebrew` 假设并完成配置。
+
+---
+
+## 8B. Linux 专项学习问答
+
+对 EDA C++ R&D 来说，Linux 不只是会用几条命令，而是要能在远程服务器上构建、运行、监控、调试和分析数值程序。
+
+### Linux Q1：Linux 文件系统中常见目录有什么作用？
+
+**参考回答：**
+
+- `/home/user`：用户代码和个人文件。
+- `/usr/bin`：常用程序。
+- `/usr/include`：系统头文件。
+- `/usr/lib`、`/usr/lib64`：系统库文件。
+- `/usr/local`：手工安装或本地软件。
+- `/opt`：独立的第三方软件。
+- `/tmp`：临时文件，不能当长期存储。
+- `/proc`：内核暴露的进程和系统信息。
+
+EDA 公司还经常把工具、PDK、license 和共享数据放在 NFS 挂载目录中，具体路径由公司环境决定。
+
+### Linux Q2：绝对路径、相对路径和当前工作目录有什么关系？
+
+**参考回答：**
+
+绝对路径从 `/` 开始；相对路径从当前工作目录开始。程序读取 `config.yaml` 时，默认相对的是启动程序时的工作目录，不一定是可执行文件所在目录。
+
+```bash
+pwd                 # 当前工作目录
+realpath config.yaml
+ls -la
+```
+
+这正是 demo 从不同目录启动时可能找不到配置或图片的原因。工程程序应明确输入路径，或者在启动时打印最终解析后的绝对路径。
+
+### Linux Q3：Linux 文件权限 `rwx` 如何理解？
+
+**参考回答：**
+
+权限分为 owner、group、others 三组，每组包含读、写、执行：
+
+```text
+-rwxr-x---
+ ||| ||| |||
+ user group other
+```
+
+常用命令：
+
+```bash
+ls -l demo_MEEF_Optimizer_init
+chmod u+x script.sh
+chmod 750 script.sh
+```
+
+目录的执行权限表示能否进入和访问目录中的条目。不要为了省事使用 `chmod -R 777`，它会造成不必要的安全风险。
+
+### Linux Q4：进程和线程有什么区别？
+
+**参考回答：**
+
+进程拥有独立虚拟地址空间；同一进程中的线程共享代码、堆和全局数据，但有各自的栈和寄存器。项目运行一个 demo 时产生一个进程，OpenMP 在这个进程中创建多个线程。
+
+```text
+demo 进程
+├── 主线程
+├── OpenMP 线程 1
+├── OpenMP 线程 2
+└── OpenMP 线程 3
+```
+
+线程共享数据带来低通信开销，也带来 data race、false sharing 和线程安全问题。
+
+### Linux Q5：如何查看程序进程和线程？
+
+**参考回答：**
+
+```bash
+pgrep -af demo_MEEF_Optimizer_init
+ps -ef | rg demo_MEEF
+top -H -p <PID>
+ps -L -p <PID> -o pid,tid,psr,pcpu,stat,comm
+```
+
+`top -H` 可以查看每个线程的 CPU 使用率。若设置了 8 个 OpenMP 线程但只有一个线程占用 CPU，应检查是否进入并行区域、任务数是否足够以及是否关闭了内层并行。
+
+### Linux Q6：如何控制 OpenMP 线程数并确认设置生效？
+
+**参考回答：**
+
+```bash
+OMP_NUM_THREADS=8 OMP_DISPLAY_ENV=TRUE \
+  ./demo_MEEF_Optimizer_init
+```
+
+C++ 中可以调用：
+
+```cpp
+omp_get_max_threads();  // 可能使用的最大线程数
+omp_get_num_threads();  // 当前并行区域实际线程数
+omp_get_thread_num();   // 当前线程编号
+```
+
+`schedule(static)` 决定循环迭代如何分配，不决定线程数量。还应关注机器物理核心数、超线程和嵌套并行，线程越多不一定越快。
+
+### Linux Q7：前台、后台、`nohup` 和终端会话有什么区别？
+
+**参考回答：**
+
+```bash
+./demo                         # 前台运行
+./demo &                       # 当前 shell 后台运行
+jobs                           # 查看当前 shell 作业
+fg %1                          # 切回前台
+nohup ./demo > run.log 2>&1 &  # 退出终端后继续运行
+```
+
+长时间 EDA 任务更推荐使用 `tmux`、`screen` 或集群调度系统。单纯加 `&` 后关闭 SSH，会话中的任务可能收到 `SIGHUP` 而退出。
+
+### Linux Q8：标准输入、标准输出和标准错误是什么？
+
+**参考回答：**
+
+每个进程默认有三个文件描述符：
+
+```text
+0：stdin   标准输入
+1：stdout  标准输出
+2：stderr  标准错误
+```
+
+保存所有终端输出：
+
+```bash
+./demo 2>&1 | tee run.log
+```
+
+只写文件：
+
+```bash
+./demo > run.log 2>&1
+```
+
+`tee` 可以一边在终端显示，一边写日志。程序也应返回正确退出码，Shell 中用 `echo $?` 查看上一条命令是否成功。
+
+### Linux Q9：管道 `|` 的工作原理是什么？
+
+**参考回答：**
+
+管道把左侧命令的标准输出连接到右侧命令的标准输入：
+
+```bash
+ps -ef | rg demo_MEEF
+rg 'error|warning' run.log | sort | uniq -c
+```
+
+它不是把两个命令“按顺序随便连接”，而是在进程之间传输字节流。复杂脚本应使用 `set -o pipefail`，否则管道左侧失败可能被最后一个成功命令掩盖。
+
+### Linux Q10：如何安全终止进程？
+
+**参考回答：**
+
+```bash
+kill -TERM <PID>  # 请求程序正常退出，默认选择
+kill -INT <PID>   # 类似 Ctrl+C
+kill -KILL <PID>  # 强制终止，无法清理资源
+```
+
+应先使用 `TERM`，给程序保存日志和清理临时文件的机会。只有程序无响应时才使用 `KILL`。`kill -9` 不能被捕获，也不会执行正常清理逻辑。
+
+### Linux Q11：环境变量 `PATH` 和动态库搜索路径有什么区别？
+
+**参考回答：**
+
+`PATH` 决定 Shell 去哪里找可执行程序：
+
+```bash
+echo "$PATH"
+command -v cmake
+```
+
+动态库搜索路径决定程序运行时去哪里找 `.so`。Linux 可以用：
+
+```bash
+ldd ./demo_MEEF_Optimizer_init
+readelf -d ./demo_MEEF_Optimizer_init | rg 'RPATH|RUNPATH'
+```
+
+临时设置 `LD_LIBRARY_PATH` 可以解决实验环境问题，但正式部署更适合正确安装依赖或设置 RPATH，避免依赖用户 Shell 配置。
+
+### Linux Q12：编译错误、链接错误和运行时动态库错误如何区分？
+
+**参考回答：**
+
+- 编译错误：`not declared`、`no matching function`、找不到头文件，发生在 `.cpp → .o`。
+- 链接错误：`undefined reference`、`multiple definition`，发生在目标文件和库组合阶段。
+- 运行错误：`error while loading shared libraries`，可执行文件已经生成，但启动时找不到 `.so`。
+
+对应排查工具：
+
+```bash
+cmake --build build-release --verbose
+nm -C liblitho_core.a | rg Imaging
+ldd build-release/demo_MEEF_Optimizer_init
+```
+
+面试时要能根据错误发生阶段选择工具，而不是看到所有错误都重新安装 CMake。
+
+### Linux Q13：如何使用 GDB 调试崩溃？
+
+**参考回答：**
+
+先使用带调试符号的构建：
+
+```bash
+cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug --parallel
+gdb --args build-debug/demo_MEEF_Optimizer_init
+```
+
+GDB 中常用：
+
+```text
+run                 启动
+bt                  当前线程调用栈
+frame 2             切换栈帧
+print variable      查看变量
+info threads        查看线程
+thread apply all bt 输出所有线程调用栈
+```
+
+多线程死锁时，`thread apply all bt` 特别重要。生产崩溃还应学习 core dump 和 `coredumpctl gdb`。
+
+### Linux Q14：如何分析程序性能？
+
+**参考回答：**
+
+先测量，再优化：
+
+```bash
+/usr/bin/time -v ./demo
+perf stat ./demo
+perf record -g ./demo
+perf report
+```
+
+- `time -v`：总时间、CPU 占用、最大常驻内存。
+- `perf stat`：cycles、instructions、cache miss 等总体计数。
+- `perf record/report`：找出热点函数和调用栈。
+
+对本项目应分别测 SOCS 分解、单次成像、MEEF 矩阵构建、曲线渲染和磁盘 I/O，不能只看总时间。
+
+### Linux Q15：如何检查内存、磁盘和系统负载？
+
+**参考回答：**
+
+```bash
+free -h              # 内存使用
+vmstat 1             # CPU、内存和调度概况
+df -h                # 文件系统剩余空间
+du -sh result build-* # 目录占用
+uptime                # load average
+```
+
+EDA 任务产生大量中间矩阵时，磁盘写满会导致保存失败；内存不足可能触发 OOM killer。Linux 上还应检查系统日志，区分程序自身异常和系统强制终止。
+
+### Linux Q16：Sanitizer 和 Valgrind 分别适合什么场景？
+
+**参考回答：**
+
+Sanitizer 在编译时插桩，速度通常比 Valgrind 快，适合 CI：ASan 检查越界和 use-after-free，UBSan 检查未定义行为，TSan 检查数据竞争。Valgrind 不要求重新编译或只需调试信息，但运行更慢，在某些平台和复杂库上兼容性有限。
+
+OpenMP 程序使用 TSan 时可能看到运行时库相关报告，需要先构造最小复现并区分真实共享数据竞争和工具/运行时噪声。
+
+### Linux Q17：SSH、SCP 和 rsync 有什么区别？
+
+**参考回答：**
+
+```bash
+ssh user@server                         # 远程登录
+scp config.yaml user@server:/work/run/ # 简单复制
+rsync -av --progress ./ user@server:/work/Litho_cpp/
+```
+
+`rsync` 支持增量同步，重复传输大型工程或结果目录时更高效。同步前应通过 `.gitignore` 或排除规则避免上传 build、结果缓存和无关虚拟环境。
+
+### Linux Q18：Shell 脚本至少需要掌握什么？
+
+**参考回答：**
+
+至少掌握变量、引用、参数、条件判断、循环、函数、退出码和重定向。推荐脚本开头：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+build_dir="build-release"
+cmake -S . -B "$build_dir" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build "$build_dir" \
+  --target demo_MEEF_Optimizer_init --parallel
+
+(
+  cd "$build_dir"
+  ./demo_MEEF_Optimizer_init
+) 2>&1 | tee meef_run.log
+```
+
+- `-e`：未处理的命令失败时退出。
+- `-u`：使用未定义变量时报错。
+- `pipefail`：管道中任意关键命令失败都能被发现。
+- 给变量加双引号，避免路径中空格和通配符展开。
+
+### Linux Q19：EDA 计算集群上的作业调度是什么？
+
+**参考回答：**
+
+共享服务器不能让每个人随意占满 CPU 和内存，因此常用 Slurm、LSF 等调度系统。用户提交作业时声明 CPU、内存、运行时间和队列，调度器选择节点执行。
+
+面试至少应理解：交互作业和批处理作业、资源申请、作业状态、日志文件、超时和取消作业。具体命令取决于公司的调度器，不应把本地 `nohup` 当成集群资源管理方案。
+
+### Linux Q20：`rg`、`find`、`sed` 和 `awk` 各适合什么？
+
+**参考回答：**
+
+- `rg`：在源码或日志内容中快速搜索。
+- `find`：按文件名、类型、时间或大小寻找文件。
+- `sed`：逐行替换和简单文本转换。
+- `awk`：按列处理结构化文本并统计。
+
+```bash
+rg -n 'omp parallel|fftw_execute' source include
+find result -type f -name '*.txt'
+awk -F, 'NR > 1 {sum += $3} END {print sum/(NR-1)}' errors.csv
+```
+
+面试不要求背所有参数，但要能组合命令快速定位源码、错误日志和实验结果。
+
+### Linux 专项实操
+
+1. 在 Linux 上从空构建目录完成配置、编译和运行，并保存完整日志。
+2. 设置 `OMP_NUM_THREADS=1/2/4/8`，记录时间和加速比。
+3. 运行时使用 `top -H` 确认各 OpenMP 线程是否占用 CPU。
+4. 使用 `ldd` 解释 demo 依赖的动态库来自哪里。
+5. 故意传入错误配置路径，检查退出码和 stderr 日志。
+6. 用 GDB 在 `Imaging::compute` 设置断点并查看调用栈。
+7. 用 `perf` 找出一次 MEEF 迭代的前三个热点。
+8. 写一个 `build_and_run.sh`，完成构建、运行和日志保存。
+
+---
+
 ## 9. 面试中的项目追问
 
 ### Q59：项目中你解决过最难的问题是什么？
@@ -545,6 +1184,7 @@ FFTW planner 通常不能无保护地并发创建 plan。项目在进入 MEEF �
 ### 第二阶段：补 C++、数值和 HPC（2～4 周）
 
 - 完成 Q33～Q58。
+- 完成 CMake Q1～Q16 和 Linux Q1～Q20，并动手完成两个专项实操。
 - 给 FFT、SOCS、EPE、MEEF 增加测试。
 - 使用 ASan/UBSan 检查。
 - 输出 OpenMP scaling 和 SOCS 精度—速度报告。
@@ -566,7 +1206,8 @@ FFTW planner 通常不能无保护地并发创建 plan。项目在进入 MEEF �
 - 现场推导 Abbe/SOCS 和 MEEF 中心差分。
 - 解释 SVD、病态矩阵和正则化。
 - 解释 OpenMP/FFTW 的线程安全设计。
+- 能从零完成 CMake 配置、构建、依赖排查，并解释 target 依赖传播。
+- 能在 Linux 远程环境运行、保存日志、检查线程、调试崩溃和定位性能热点。
 - 指出项目至少三个真实缺陷及修复方案。
 - 给出数值正确性和性能验证方案。
 - 说明研究原型到工业 EDA 工具还缺什么。
-
