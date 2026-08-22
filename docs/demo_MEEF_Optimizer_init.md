@@ -92,7 +92,11 @@ meef:
   config_snapshot_name: "run_001_config.yaml"
   console_log_name: "run_001_console.log"
   iter: 50
+  main_cp_mode: "target_interval"
+  main_cps_npy_path: ""
   main_cp_interval: 9
+  sraf_mask_mode: "lsm"
+  fitted_sraf_txt_path: ""
   delta: 0.10
 ```
 
@@ -104,8 +108,12 @@ meef:
 | `console_log_name` | console_output.log | 终端输出日志名称       |
 | `pattern_name`     | 工字型 | 图案名                       |
 | `move_strategy`    | xy     | X/Y 双向扰动                 |
+| `main_cp_mode`     | target_interval | 从目标间隔取点；也可设为 `npy` |
+| `main_cps_npy_path` | 空    | `npy` 模式的控制点文件，点为 `(y,x)` |
 | `main_cp_interval` | 7      | 主图形控制点采样间隔（像素） |
 | `main_symmetry`    | none   | 不使用对称                   |
+| `sraf_mask_mode`   | lsm    | 从原 LSM 提取；也可设为 `fitted_txt` |
+| `fitted_sraf_txt_path` | 空 | 拟合后的完整 mask 或 SRAF-only 文本 |
 | `sraf_cp_interval` | 5      | SRAF 控制点间隔              |
 | `sraf_min_cps`     | 8      | SRAF 最少控制点数            |
 | `sraf_min_aera`    | 50     | SRAF 最小连通面积            |
@@ -120,7 +128,13 @@ meef:
 | `step_tol`         | 0.0    | 步长收敛阈值（0=不判断）     |
 | `patience`         | 3      | 早停耐心值                   |
 
-修改 YAML 参数后直接重新运行，无需重新编译。
+`main_cp_mode: npy` 支持 Python 版 `np.save(..., dtype=object)` 产生的不等长多轮廓；
+demo 会用项目 `.venv/bin/python`（不存在时用 `python3`）将其转换为输出目录中的
+`imported_main_cps.txt`，随后由 C++ 校验边界并读取。`sraf_mask_mode: fitted_txt`
+会相对 target 分离出 SRAF，并把该灰度 mask 原样固定用于每次 MEEF 扰动。
+
+修改根目录 `config.yaml` 后，需要重新执行 CMake 配置以刷新 build 目录副本；
+也可以运行 demo 时显式传入根目录配置文件路径。
 
 ## 5. 输出文件
 
@@ -130,6 +144,7 @@ meef:
 | 文件                   | 模式           | 说明                      |
 | ---------------------- | -------------- | ------------------------- |
 | `main_cps.txt`         | 全部           | 主图形控制点              |
+| `imported_main_cps.txt`| NPY 导入       | `.npy` 的可审计转换结果   |
 | `sraf_cps.txt`         | 全部           | SRAF 控制点               |
 | `eps.txt`              | 全部           | edge points               |
 | `sraf_mask.txt`        | 全部           | 分离出的 SRAF 掩模        |

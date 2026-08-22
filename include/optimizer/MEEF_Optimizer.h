@@ -21,9 +21,17 @@ namespace litho {
         int iter = 100;
         double step_tol = 0.0;  // 0 表示关闭位移提前终止
         int patience = 3;
-        // 主图形取控制点间隔
+        // 主图形控制点来源：target_interval / file。
+        // file 模式读取由 demo 预先从 .npy 转换得到的文本文件，坐标顺序为 y x。
+        std::string main_cp_mode = "target_interval";
+        std::string main_cps_path;
+        // target_interval 模式下的主图形取点间隔。
         int main_cp_interval = 7;
         std::string main_symmetry = "none";
+        // SRAF 来源：lsm / fitted_txt。fitted_txt 可以是完整拟合 mask，
+        // 也可以是只含 SRAF 的 mask；都会相对 target 分离出固定 SRAF。
+        std::string sraf_mask_mode = "lsm";
+        std::string fitted_sraf_txt_path;
         // SRAF cp
         int sraf_cp_interval = 5;
         int sraf_min_cps = 8;
@@ -88,6 +96,8 @@ namespace litho {
             static cv::Mat _to_cv8u(const Eigen::MatrixXd& M);
             static IPoints _cv_to_ipoints(const std::vector<cv::Point>& c);
             static  ControlPoints _extract_mask_control_points(const Eigen::MatrixXd& mask, int k, const std::string& symmetry);
+            static ControlPoints _load_control_points_txt(
+                const std::string& path, int image_rows, int image_cols);
             static IPoints _sample_elements(const IPoints& points, int k, const std::string& method);
             static Contour _ipoints_to_contour(const IPoints& points);
             static ControlPoints _extract_SRAF_control_points(const Eigen::MatrixXd& staf_mask, int k, int min_area, int min_cps);

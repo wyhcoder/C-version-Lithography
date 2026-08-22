@@ -35,6 +35,13 @@ static T yaml_required(const YAML::Node& node, const char* key) {
     return node[key].as<T>();
 }
 
+template <typename T>
+static T yaml_optional(
+    const YAML::Node& node, const char* key, const T& default_value)
+{
+    return (node && node[key]) ? node[key].as<T>() : default_value;
+}
+
 static std::filesystem::path config_relative_path(
     const std::filesystem::path& project_root,
     const std::string& path)
@@ -163,6 +170,14 @@ int main(int argc, char** argv) {
         const std::string mode = yaml_required<std::string>(meef_yaml, "run_mode");
         const std::string pattern_name = yaml_required<std::string>(
             meef_yaml, "pattern_name");
+        const std::string main_cp_mode = yaml_optional<std::string>(
+            meef_yaml, "main_cp_mode", "target_interval");
+        const std::string main_cps_config_path = yaml_optional<std::string>(
+            meef_yaml, "main_cps_npy_path", "");
+        const std::string sraf_mask_mode = yaml_optional<std::string>(
+            meef_yaml, "sraf_mask_mode", "lsm");
+        const std::string fitted_sraf_config_path = yaml_optional<std::string>(
+            meef_yaml, "fitted_sraf_txt_path", "");
         const fs::path target_path =
             build_dir / "target_pattern" / (pattern_name + ".bmp");
         if (!fs::is_regular_file(lsm_path)) {
@@ -170,6 +185,40 @@ int main(int argc, char** argv) {
         }
         if (!fs::is_regular_file(target_path)) {
             throw std::runtime_error("YAML 指定的 target 不存在: " + target_path.string());
+        }
+        if (main_cp_mode != "target_interval" && main_cp_mode != "npy") {
+            throw std::invalid_argument(
+                "meef.main_cp_mode 仅支持 target_interval / npy");
+        }
+        fs::path main_cps_npy_path;
+        if (main_cp_mode == "npy") {
+            if (main_cps_config_path.empty()) {
+                throw std::invalid_argument(
+                    "main_cp_mode=npy 时必须设置 meef.main_cps_npy_path");
+            }
+            main_cps_npy_path = config_relative_path(
+                project_root, main_cps_config_path);
+            if (!fs::is_regular_file(main_cps_npy_path)) {
+                throw std::runtime_error(
+                    "主图形控制点 NPY 不存在: " + main_cps_npy_path.string());
+            }
+        }
+        if (sraf_mask_mode != "lsm" && sraf_mask_mode != "fitted_txt") {
+            throw std::invalid_argument(
+                "meef.sraf_mask_mode 仅支持 lsm / fitted_txt");
+        }
+        fs::path fitted_sraf_path;
+        if (sraf_mask_mode == "fitted_txt") {
+            if (fitted_sraf_config_path.empty()) {
+                throw std::invalid_argument(
+                    "sraf_mask_mode=fitted_txt 时必须设置 meef.fitted_sraf_txt_path");
+            }
+            fitted_sraf_path = config_relative_path(
+                project_root, fitted_sraf_config_path);
+            if (!fs::is_regular_file(fitted_sraf_path)) {
+                throw std::runtime_error(
+                    "拟合 SRAF TXT 不存在: " + fitted_sraf_path.string());
+            }
         }
         if (config_snapshot_name.empty() || fs::path(config_snapshot_name).has_parent_path()) {
             throw std::invalid_argument(
@@ -194,6 +243,12 @@ int main(int argc, char** argv) {
                   << "config    : " << config_path << '\n'
                   << "target    : " << target_path << '\n'
                   << "lsm mask  : " << lsm_path << '\n'
+                  << "main CP   : " << main_cp_mode;
+        if (!main_cps_npy_path.empty()) std::cout << " (" << main_cps_npy_path << ")";
+        std::cout << '\n'
+                  << "SRAF mask : " << sraf_mask_mode;
+        if (!fitted_sraf_path.empty()) std::cout << " (" << fitted_sraf_path << ")";
+        std::cout << '\n'
                   << "save path : " << save_path << '\n'
                   << "config copy: " << config_snapshot << '\n'
                   << "console log: " << console_log_path << "\n\n";
@@ -223,8 +278,41 @@ int main(int argc, char** argv) {
         meef_config.step_tol = yaml_required<double>(meef_yaml, "step_tol");
         meef_config.patience = yaml_required<int>(meef_yaml, "patience");
 
+        meef_config.main_cp_mode =
+            (main_cp_mode == "npy") ? "file" : "target_interval";
         meef_config.main_cp_interval = yaml_required<int>(meef_yaml, "main_cp_interval");
         meef_config.main_symmetry = yaml_required<std::string>(meef_yaml, "main_symmetry");
+
+        if (main_cp_mode == "npy") {
+            const fs::path converter =
+                project_root / "scripts/convert_npy_control_points.py";
+            if (!fs::is_regular_file(converter)) {
+                throw std::runtime_error(
+                    "NPY 控制点转换脚本不存在: " + converter.string());
+            }
+            const fs::path venv_python = project_root / ".venv/bin/python";
+            const std::string python = fs::is_regular_file(venv_python)
+                ? shell_quote(venv_python)
+                : "python3";
+            const fs::path converted_cps = save_path / "imported_main_cps.txt";
+            const std::string convert_command =
+                python + " " + shell_quote(converter) +
+                " --input " + shell_quote(main_cps_npy_path) +
+                " --output " + shell_quote(converted_cps);
+            std::cout << "转换 NPY 控制点: " << main_cps_npy_path << '\n';
+            const int convert_status = std::system(convert_command.c_str());
+            if (convert_status != 0 || !fs::is_regular_file(converted_cps)) {
+                throw std::runtime_error(
+                    "NPY 控制点转换失败，退出状态: " +
+                    std::to_string(convert_status));
+            }
+            meef_config.main_cps_path = converted_cps.string();
+        }
+
+        meef_config.sraf_mask_mode = sraf_mask_mode;
+        if (!fitted_sraf_path.empty()) {
+            meef_config.fitted_sraf_txt_path = fitted_sraf_path.string();
+        }
 
         meef_config.sraf_cp_interval = yaml_required<int>(meef_yaml, "sraf_cp_interval");
         meef_config.sraf_min_cps = yaml_required<int>(meef_yaml, "sraf_min_cps");

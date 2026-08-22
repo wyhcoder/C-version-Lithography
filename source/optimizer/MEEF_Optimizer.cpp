@@ -27,19 +27,57 @@
 #endif
 namespace litho {
 
+    // 功能：构造并初始化 MEEF 优化器。加载目标/LSM/SRAF，生成或导入控制点，
+    //       选择 EP 点，渲染参数化初始掩模，并把初始化元数据保存到输出目录。
     MEEF_Optimizer::MEEF_Optimizer(const LithographySimulator& simulator,const ImagingCache& cache, const MEEFPipelineConfig& config):
         _simulator(simulator),
         _cache(cache),
         _config(config)
     {
-        // 加载 ls_mask 并分离出主图形和SRAF
+        // 加载基础 LSM，并按 target 将主图形与 SRAF 分离。
         SaveTxt::load_txt(_config.ls_mask_path , _lsm_mask);
         _target_mask = _simulator._mask.data();
+        if (_lsm_mask.rows() != _target_mask.rows() ||
+            _lsm_mask.cols() != _target_mask.cols()) {
+            throw std::invalid_argument(
+                "MEEF_Optimizer: LSM mask dimensions must match target mask");
+        }
         _main_sraf = _split_main_and_sraf(
             _lsm_mask, _target_mask, _config.dilate_radius);
+
+        // Python set_meef.py 的 fitted SRAF 路径实际保存的是拟合后的完整 mask。
+        // 因此这里也先相对 target 做拆分，再只保留 SRAF 灰度部分。
+        if (_config.sraf_mask_mode == "fitted_txt") {
+            Eigen::MatrixXd fitted_mask;
+            SaveTxt::load_txt(_config.fitted_sraf_txt_path, fitted_mask);
+            if (fitted_mask.rows() != _target_mask.rows() ||
+                fitted_mask.cols() != _target_mask.cols()) {
+                throw std::invalid_argument(
+                    "MEEF_Optimizer: fitted SRAF mask dimensions must match target mask");
+            }
+            _main_sraf.sraf_mask = _split_main_and_sraf(
+                fitted_mask, _target_mask, _config.dilate_radius).sraf_mask;
+        } else if (_config.sraf_mask_mode != "lsm") {
+            throw std::invalid_argument(
+                "MEEF_Optimizer: unsupported sraf_mask_mode: " +
+                _config.sraf_mask_mode);
+        }
+
         EpSelect ep_select(_target_mask, _config.mid_weight, _config.other_weight);
         _eps_result = ep_select.select_eps_others(_config.interval_line, _config.interval_corner);
-        _main_control_points = _extract_mask_control_points(_target_mask, config.main_cp_interval, config.main_symmetry);
+        if (_config.main_cp_mode == "target_interval") {
+            _main_control_points = _extract_mask_control_points(
+                _target_mask, config.main_cp_interval, config.main_symmetry);
+        } else if (_config.main_cp_mode == "file") {
+            _main_control_points = _load_control_points_txt(
+                _config.main_cps_path,
+                static_cast<int>(_target_mask.rows()),
+                static_cast<int>(_target_mask.cols()));
+        } else {
+            throw std::invalid_argument(
+                "MEEF_Optimizer: unsupported main_cp_mode: " +
+                _config.main_cp_mode);
+        }
         _sraf_control_points = _extract_SRAF_control_points(_main_sraf.sraf_mask, config.sraf_cp_interval, config.sraf_min_aera, config.sraf_min_cps);
         _num_eps = static_cast<int>(_eps_result.eps.rows());
         _num_weps = static_cast<int>((_eps_result.weight_epe.array() == 1.).count());
@@ -58,7 +96,10 @@ namespace litho {
 
         ParametricDemo parametric_sraf(
             config.curve_type, _target_mask, config.msaa_level);
-        _render_sraf_mask = parametric_sraf.render_curve(_sraf_control_points);
+        // fitted_txt 已经是拟合结果，直接固定使用，避免从轮廓再次拟合造成漂移。
+        _render_sraf_mask = (_config.sraf_mask_mode == "fitted_txt")
+            ? _main_sraf.sraf_mask
+            : parametric_sraf.render_curve(_sraf_control_points);
         _render_main_mask = parametric_sraf.render_curve(_main_control_points);
         _render_initial_mask =
             _render_sraf_mask.array() + _render_main_mask.array();
@@ -72,7 +113,8 @@ namespace litho {
 
 
     }
-    // ── 转换：Eigen → cv::Mat ────────────────────────────────────────────────
+    // 功能：把归一化的 Eigen 灰度矩阵转换为 OpenCV 8 位单通道图像；
+    //       像素值先乘 255，再限制到 [0, 255]，供轮廓和连通域算法使用。
     cv::Mat MEEF_Optimizer::_to_cv8u(const Eigen::MatrixXd& M){
         int rows = static_cast<int>(M.rows());
         int cols = static_cast<int>(M.cols());
@@ -84,6 +126,7 @@ namespace litho {
         return out;
     }
 
+    // 功能：把 OpenCV 的 (x, y) 整数点序列转换为工程统一使用的 (y, x) 点序列。
     IPoints MEEF_Optimizer::_cv_to_ipoints(const std::vector<cv::Point>& c){
         IPoints out;
         out.reserve(c.size());
@@ -91,6 +134,8 @@ namespace litho {
         return out;
     }
 
+    // 功能：将包含主图形和 SRAF 的 mask 拆成两个灰度矩阵。
+    //       优先按连通域与 target 的真实重叠比例分类；完全不重叠时使用膨胀区域兜底。
     Main_SRAF MEEF_Optimizer::_split_main_and_sraf(
         const Eigen::MatrixXd& lsm_mask,
         const Eigen::MatrixXd& target_mask,
@@ -108,26 +153,85 @@ namespace litho {
                 "MEEF_Optimizer::_split_main_and_sraf: dilate_radius must be non-negative");
         }
 
-        // 1. target_mask 二值化：>0 → 255，等价 Python (target_mask > 0).astype(uint8)
-        cv::Mat origin_bin(H, W, CV_8UC1);
-        for (int r = 0; r < H; ++r)
-            for (int c = 0; c < W; ++c)
-                origin_bin.at<uchar>(r, c) = (target_mask(r, c) > 0.0) ? 255 : 0;
+        if (target_mask.rows() != H || target_mask.cols() != W) {
+            throw std::invalid_argument(
+                "MEEF_Optimizer::_split_main_and_sraf: mask dimensions mismatch");
+        }
 
-        // 2. 圆形结构元膨胀（等价 scipy.disk(radius) + binary_dilation）
-        //    MORPH_ELLIPSE 内切于 ksize×ksize 正方形时即为圆
+        // 与 Python extract_sraf 对齐：先按 8 邻接连通域及真实重叠比例分类。
+        constexpr double fg_threshold = 1e-6;
+        constexpr double overlap_ratio = 0.05;
+        cv::Mat foreground(H, W, CV_8UC1);
+        cv::Mat origin_bin(H, W, CV_8UC1);
+        for (int r = 0; r < H; ++r) {
+            for (int c = 0; c < W; ++c) {
+                foreground.at<uchar>(r, c) =
+                    (lsm_mask(r, c) > fg_threshold) ? 255 : 0;
+                origin_bin.at<uchar>(r, c) = (target_mask(r, c) > 0.0) ? 255 : 0;
+            }
+        }
+
+        if (cv::countNonZero(foreground) == 0) return result;
+
+        cv::Mat labels, stats, centroids;
+        const int component_count = cv::connectedComponentsWithStats(
+            foreground, labels, stats, centroids, 8, CV_32S);
+        std::vector<int> overlaps(static_cast<size_t>(component_count), 0);
+        for (int r = 0; r < H; ++r) {
+            for (int c = 0; c < W; ++c) {
+                const int label = labels.at<int>(r, c);
+                if (label > 0 && origin_bin.at<uchar>(r, c) != 0) {
+                    ++overlaps[static_cast<size_t>(label)];
+                }
+            }
+        }
+
+        std::vector<bool> is_main_component(
+            static_cast<size_t>(component_count), false);
+        bool matched_main = false;
+        for (int label = 1; label < component_count; ++label) {
+            const int area = stats.at<int>(label, cv::CC_STAT_AREA);
+            const int overlap = overlaps[static_cast<size_t>(label)];
+            const bool is_main = overlap > 0 &&
+                overlap >= std::max(1, static_cast<int>(overlap_ratio * area));
+            is_main_component[static_cast<size_t>(label)] = is_main;
+            matched_main = matched_main || is_main;
+        }
+
+        for (int r = 0; r < H; ++r) {
+            for (int c = 0; c < W; ++c) {
+                const int label = labels.at<int>(r, c);
+                if (label == 0) continue;
+                if (is_main_component[static_cast<size_t>(label)]) {
+                    result.main_mask(r, c) = lsm_mask(r, c);
+                } else {
+                    result.sraf_mask(r, c) = lsm_mask(r, c);
+                }
+            }
+        }
+
+        if (matched_main) return result;
+
+        // 极端情况下 fitted mask 与 target 完全不重叠，回退到膨胀区域拆分。
         cv::Mat dilated_bin;
         if (dilate_radius == 0) {
             dilated_bin = origin_bin.clone();
         } else {
             int ksize = 2 * dilate_radius + 1;
-            cv::Mat kernel = cv::getStructuringElement(
-                cv::MORPH_ELLIPSE, cv::Size(ksize, ksize));
+            cv::Mat kernel = cv::Mat::zeros(ksize, ksize, CV_8UC1);
+            for (int y = -dilate_radius; y <= dilate_radius; ++y) {
+                for (int x = -dilate_radius; x <= dilate_radius; ++x) {
+                    if (x * x + y * y <= dilate_radius * dilate_radius) {
+                        kernel.at<uchar>(y + dilate_radius,
+                                         x + dilate_radius) = 255;
+                    }
+                }
+            }
             cv::dilate(origin_bin, dilated_bin, kernel);
         }
 
-        // 3. 按膨胀掩膜拆分 lsm_mask —— 不改变像素灰度，仅按空间区域归类
-        //    dilated 区域 → main_mask；其余 → sraf_mask
+        result.main_mask.setZero();
+        result.sraf_mask.setZero();
         for (int r = 0; r < H; ++r) {
             for (int c = 0; c < W; ++c) {
                 if (dilated_bin.at<uchar>(r, c) > 0) {
@@ -139,6 +243,90 @@ namespace litho {
         }
         return result;
     }
+
+    // 功能：从文本文件读取多个 (y, x) 控制点轮廓，并检查格式、有限性和图像边界；
+    //       空行或“# contour ...”注释用于分隔不同轮廓。
+    ControlPoints MEEF_Optimizer::_load_control_points_txt(
+        const std::string& path, int image_rows, int image_cols)
+    {
+        std::ifstream input(path);
+        if (!input) {
+            throw std::runtime_error(
+                "MEEF_Optimizer: cannot open control-points file: " + path);
+        }
+
+        std::vector<std::vector<Eigen::Vector2d>> parsed;
+        std::vector<Eigen::Vector2d> current;
+        auto finish_contour = [&]() {
+            if (!current.empty()) {
+                parsed.push_back(std::move(current));
+                current.clear();
+            }
+        };
+
+        std::string line;
+        int line_number = 0;
+        while (std::getline(input, line)) {
+            ++line_number;
+            const auto first = line.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos) {
+                finish_contour();
+                continue;
+            }
+            if (line[first] == '#') {
+                if (line.find("contour", first) != std::string::npos) {
+                    finish_contour();
+                }
+                continue;
+            }
+
+            std::istringstream values(line);
+            double y = 0.0;
+            double x = 0.0;
+            std::string extra;
+            if (!(values >> y >> x) || (values >> extra)) {
+                throw std::runtime_error(
+                    "MEEF_Optimizer: expected exactly 'y x' at " + path +
+                    ":" + std::to_string(line_number));
+            }
+            if (!std::isfinite(y) || !std::isfinite(x) ||
+                y < 0.0 || y > image_rows - 1.0 ||
+                x < 0.0 || x > image_cols - 1.0) {
+                throw std::runtime_error(
+                    "MEEF_Optimizer: invalid/out-of-bounds control point at " +
+                    path + ":" + std::to_string(line_number));
+            }
+            current.emplace_back(y, x);
+        }
+        finish_contour();
+
+        if (parsed.empty()) {
+            throw std::runtime_error(
+                "MEEF_Optimizer: no control-point contours in " + path);
+        }
+
+        ControlPoints result;
+        result.reserve(parsed.size());
+        for (size_t contour_index = 0; contour_index < parsed.size();
+             ++contour_index) {
+            const auto& points = parsed[contour_index];
+            if (points.size() < 2) {
+                throw std::runtime_error(
+                    "MEEF_Optimizer: contour " +
+                    std::to_string(contour_index) +
+                    " has fewer than 2 points in " + path);
+            }
+            Contour contour(static_cast<Eigen::Index>(points.size()), 2);
+            for (Eigen::Index row = 0; row < contour.rows(); ++row) {
+                contour.row(row) = points[static_cast<size_t>(row)].transpose();
+            }
+            result.push_back(std::move(contour));
+        }
+        return result;
+    }
+
+    // 功能：按给定间隔从整数点序列中抽样；skip 模式使用 k+1 作为步长，
+    //       其他模式直接使用 k，并保证实际步长至少为 1。
     IPoints MEEF_Optimizer::_sample_elements(const IPoints &pts, int k, const std::string& mode){
         int step = std::max(1, (mode == "skip" ? k+1 : k));
         IPoints out;
@@ -148,6 +336,7 @@ namespace litho {
         return out;
     }
 
+    // 功能：把 vector 形式的整数 (y, x) 点序列转换为 Eigen 的 N×2 浮点轮廓矩阵。
     Contour MEEF_Optimizer::_ipoints_to_contour(const IPoints &pts){
         int n = static_cast<int>(pts.size());
         Contour m(n,2);
@@ -158,7 +347,8 @@ namespace litho {
         return m;
     }
 
-
+    // 功能：从二值/灰度主图形 mask 提取外轮廓并间隔采样控制点；
+    //       配置对称模式时，用第一条轮廓生成对应的镜像轮廓。
     ControlPoints MEEF_Optimizer::_extract_mask_control_points(const Eigen::MatrixXd &mask, int k, const std::string& symmetry){
         cv::Mat mask_cv = _to_cv8u(mask);
         std::vector<std::vector<cv::Point>> cv_contours;
@@ -184,6 +374,9 @@ namespace litho {
         return result;
 
     }
+
+    // 功能：从 SRAF mask 中过滤过小连通域、提取外轮廓并采样控制点；
+    //       当采样点过少时自动减小步长，以尽量满足每块 SRAF 的最少控制点数。
     ControlPoints MEEF_Optimizer::_extract_SRAF_control_points(const Eigen::MatrixXd &sraf_mask, int k, int min_area, int min_cps){
         cv::Mat sraf_mask_cv = _to_cv8u(sraf_mask);
 
@@ -226,6 +419,8 @@ namespace litho {
         return result;
     }
 
+    // 功能：把优化器初始化后的主图形控制点、SRAF 控制点、EP 点以及渲染后的
+    //       主图形/SRAF mask 保存到配置的输出目录，便于检查和复现实验。
     // ── 保存元数据（对应 Python _save_meta）──────────────────────────────
     // 输出文件（写入 _config.save_file_path）：
     //   main_cps.txt   —— 主图形控制点（# main contour i + y x）
@@ -288,6 +483,8 @@ namespace litho {
         write_mask("main_mask.txt", _render_main_mask);
     }
 
+    // 功能：把指定迭代轮次的原始控制点保存到 curves/cp_history；
+    //       写入失败时只输出警告，不中断正在进行的优化。
     void MEEF_Optimizer::_save_cp_history(const ControlPoints& cps, const std::string& path, int iteration_idx){
         namespace fs = std::filesystem;
         fs::path cp_dir = fs::path(path)  / "curves"/ "cp_history";
@@ -324,6 +521,8 @@ namespace litho {
 
     }
 
+    // 功能：将指定轮次的控制点展开为实际参数化曲线采样点，保存到
+    //       curves/bspline_curves，用于观察控制点更新后曲线如何变化。
     void MEEF_Optimizer::_save_curve_history(
         const ControlPoints& cps,
         int iteration_idx) const
@@ -360,6 +559,8 @@ namespace litho {
         }
     }
 
+    // 功能：保存当前迭代的 mask、空中像、晶圆像、控制点位移大小以及 X/Y MEEF 矩阵；
+    //       后一轮会覆盖 iterations 目录中的这些“当前结果”文件。
     void MEEF_Optimizer::_save_iteration_results(
         const Eigen::MatrixXd& mask,
         const Imaging_Result& imaging_result,
@@ -397,6 +598,7 @@ namespace litho {
         write_matrix(iter_dir / "delta_d.txt", delta_d);
     }
 
+    // 功能：把各轮的迭代编号、PE、EPE、加权 EPE 和累计时间汇总写入 errors.csv。
     void MEEF_Optimizer::_save_history() const
     {
         namespace fs = std::filesystem;
@@ -418,6 +620,8 @@ namespace litho {
         }
     }
 
+    // 功能：分别保存“加权 EPE 最小”和“普通 EPE 最小”时的控制点、mask、
+    //       空中像、晶圆像及指标，形成 best_wepe 和 best_epe 两组快照。
     void MEEF_Optimizer::_save_best_results() const
     {
         namespace fs = std::filesystem;
@@ -492,7 +696,9 @@ namespace litho {
                  _best_epe, _best_epe_wepe,
                  _best_epe_cps, _best_epe_mask, _best_epe_imaging);
     }
-    // 用中心差分构建 x/y 方向的 MEEF 矩阵：
+    // 功能：对每个主图形控制点执行 x+/x-/y+/y- 四种扰动和成像，
+    //       用中心差分构建行对应 EP、列对应控制点的 X/Y MEEF 矩阵。
+    // 计算公式：
     //   Mx(ep, cp) = [EPE(x + delta) - EPE(x - delta)] / (2 * delta)
     //   My(ep, cp) = [EPE(y + delta) - EPE(y - delta)] / (2 * delta)
     // 每个控制点需要执行 x+、x-、y+、y- 四次独立成像，使用 OpenMP 并行计算。
@@ -681,6 +887,8 @@ namespace litho {
         return result;
     }
 
+    // 功能：在 10^start 到 10^end 之间生成 num 个等对数间隔的正数，
+    //       用作 L-Curve 扫描的正则化参数候选值。
     Eigen::VectorXd MEEF_Optimizer::_log_space(double start, double end, int num){
         Eigen::VectorXd out(num);
         double step = (end - start) / (num - 1);
@@ -690,6 +898,8 @@ namespace litho {
         return out;
     }
 
+    // 功能：对每个候选 lambda 求解 Tikhonov 正则化方程，返回对应的
+    //       残差范数 ||Ax-b|| 和解范数 ||x||，作为 L-Curve 的两条坐标。
     std::pair<Eigen::VectorXd, Eigen::VectorXd> MEEF_Optimizer::_compute_L_curve(const Eigen::MatrixXd& A, const Eigen::VectorXd& b, const Eigen::VectorXd& lambda){
         int n = A.cols();
         int m = lambda.size();
@@ -706,7 +916,8 @@ namespace litho {
         return std::make_pair(res_norms, x_norms);
 
     }
-    
+    // 功能：计算 y 相对于非均匀坐标 x 的数值梯度；边界使用单边差分，
+    //       内部使用与 numpy.gradient 对齐的非均匀网格中心差分。
     Eigen::VectorXd MEEF_Optimizer::gradient(
         const Eigen::VectorXd& y,
         const Eigen::VectorXd& x) {
@@ -726,7 +937,7 @@ namespace litho {
         }
         return d;
     }
-     
+    // 功能：在对数 L-Curve 上估算离散曲率，并返回内部曲率最大点对应的 lambda。
     double MEEF_Optimizer::_find_optimal_lambda(const Eigen::VectorXd& lambda, const Eigen::VectorXd& res_norms, const Eigen::VectorXd& x_norms){
         Eigen::VectorXd log_res = res_norms.array().log10();
         Eigen::VectorXd log_x   = x_norms.array().log10();
@@ -744,6 +955,8 @@ namespace litho {
         return lambda(max_idx);
     }
 
+    // 功能：为当前 MEEF 线性系统生成 lambda 候选、计算 L-Curve，
+    //       并自动选出用于位移求解的正则化参数。
     double MEEF_Optimizer::_find_truelambadas(const Eigen::MatrixXd& M, const Eigen::RowVectorXd& e0){
         Eigen::VectorXd b = -e0.transpose();
         Eigen::VectorXd lambdas = _log_space(-6, 2, 200);
@@ -753,6 +966,8 @@ namespace litho {
         
     }
 
+    // 功能：对 MEEF 矩阵执行薄 SVD，按奇异值能量阈值截断不可辨识方向，
+    //       再结合 Tikhonov 滤波求解使 EPE 减小的控制点位移向量。
     Eigen::VectorXd MEEF_Optimizer::_SVD_get_delta(
         const Eigen::MatrixXd& M,
         const Eigen::RowVectorXd& e,
@@ -816,6 +1031,8 @@ namespace litho {
         return svd.matrixV().leftCols(k) * coefficients;
     }
 
+    // 功能：把展平的 x/y 位移依次加到多轮廓控制点；保持 (y, x) 存储顺序，
+    //       并将更新后的坐标舍入到小数点后 4 位。
     ControlPoints MEEF_Optimizer::_update_control_points(
         const ControlPoints& cps,
         const Eigen::VectorXd& delta_x,
@@ -846,7 +1063,8 @@ namespace litho {
 
     }
 
-    // 执行完整 MEEF 优化：评估初始掩模、迭代更新控制点并保存结果。
+    // 功能：执行完整 MEEF 优化流程。先评估 LSM 和参数化初始状态，再逐轮构建
+    //       MEEF 矩阵、求控制点位移、重新成像和记录误差，最后保存历史及最优结果。
     void MEEF_Optimizer::optimize(){
         namespace fs = std::filesystem;
         // 确保结果保存目录存在。
