@@ -1,82 +1,82 @@
 # =====================================================
 # 仿真系统级参数 (Simulation System)
 # =====================================================
-PATTERN_NAME: &PATTERN_NAME "工字型"   # 对应 target_pattern/matrix_0525.bmp
+PATTERN_NAME: &PATTERN_NAME "工字型"   # YAML 锚点：同时供 mask.image_name 和 meef.pattern_name 引用
 
 system:
-  wavelength_nm: 193.0
-  pixel_size_nm: 4.0
-  grid_size_pixel: 257
+  wavelength_nm: 193.0              # 曝光光源波长，单位 nm
+  pixel_size_nm: 4.0                # mask/晶圆计算网格的像素尺寸，单位 nm/像素
+  grid_size_pixel: 257              # 成像计算矩阵边长；当前 mask 和 LSM 均应为 257×257
 
 # =====================================================
 # 掩模版参数 (Mask)
 # =====================================================
 mask:
-  image_name: *PATTERN_NAME      # 默认读取 pattern_data 文件夹下的 .bmp
-  row_grid_size: 256
+  image_name: *PATTERN_NAME          # 目标版图名称，demo 读取 target_pattern/<名称>.bmp
+  row_grid_size: 256                 # Grid 的基础采样边长，通常为 grid_size_pixel - 1
 # =====================================================
 # 光学系统参数 (Optics)
 # =====================================================
 optics:
-  na: 1.35
-  refractive_index: 1.44         # 物镜空间折射率 n
+  na: 1.35                         # 投影物镜数值孔径 NA
+  refractive_index: 1.44           # 物镜像方介质折射率 n
   aberrations:
-    {4: 0.0}                    # Zernike 像差项
+    {4: 0.0}                       # Zernike 项“编号: 系数”；4 对应离焦项，0 表示无该像差
 
 # =====================================================
 # 光源参数 (Source)
 # =====================================================
 source:
-  type: "annular"                # conventional / annular / dipole / quasar
-  sigma_in: 0.6
-  sigma_out: 0.9
+  type: "annular"                  # 光源形状：conventional / annular / dipole / quasar
+  sigma_in: 0.6                    # 归一化内圈半径；环形光源需满足 sigma_in < sigma_out
+  sigma_out: 0.9                   # 归一化外圈半径（相对于物镜瞳孔半径）
 
 # =====================================================
 # 光刻胶模型参数 (Resist Model)
 # =====================================================
 resist:
-  model: "threshold"             # threshold / sigmoid
-  threshold: 0.25
-  alpha: 85
+  model: "threshold"               # 光刻胶模型配置标识：threshold / sigmoid
+  threshold: 0.25                  # 空中像显影阈值，强度高于该值更趋向显影
+  alpha: 85                        # sigmoid 陡峭度；越大越接近硬阈值模型
 
 # =====================================================
 # MEEF 优化参数（demo_MEEF_Optimizer_init）
 # 所有路径相对于项目根目录；运行时会把本配置复制到输出目录。
 # =====================================================
 meef:
-  output_dir: "result/MEEF_result/test"
-  config_snapshot_name: "config_used.yaml"
-  console_log_name: "console_output.log"
-  lsm_mask_path: "assets/lsm_mask/ls_image工字型.txt"
-  run_mode: "--optimize"       # --init-only / --build-meef / --optimize
-  pattern_name: *PATTERN_NAME
-  move_strategy: "xy"
-  iter: 50
-  step_tol: 0.0
-  patience: 3
+  output_dir: "result/MEEF_result/test"           # 结果目录；相对路径以项目根目录为基准
+  config_snapshot_name: "config_used.yaml"       # 本次实际配置快照名，只能是文件名
+  console_log_name: "console_output.log"         # 终端输出日志名，只能是文件名
+  lsm_mask_path: "assets/lsm_mask/ls_image工字型.txt"  # 初始完整 LSM mask 文本，尺寸须与 target 一致
+  run_mode: "--optimize"                         # --init-only：仅初始化；--build-meef：只建矩阵；--optimize：完整优化
+  pattern_name: *PATTERN_NAME                     # MEEF 使用的目标图案，必须能找到 target_pattern/<名称>.bmp
+  move_strategy: "xy"                            # 控制点移动方式；当前优化器仅支持 xy 解耦移动
+  iter: 50                                       # 最大 MEEF 优化迭代次数
+  step_tol: 0.0                                  # 最大位移收敛阈值（像素）；0 表示关闭提前终止
+  patience: 3                                    # 连续多少轮满足 step_tol 后提前终止
   # 主图形控制点来源：
   #   target_interval：直接在 target 轮廓上按 main_cp_interval 取点
   #   npy：导入 Python 版保存的 .npy（支持 dtype=object 的不等长多轮廓）
-  main_cp_mode: "npy"
-  main_cps_npy_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/CPS/工字型0.8.npy"
-  main_cp_interval: 7
-  main_symmetry: "none"
+  main_cp_mode: "npy"                            # target_interval / npy
+  main_cps_npy_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/CPS/工字型0.8.npy"  # npy 模式必填；每个点按 (y,x) 保存
+  main_cp_interval: 7                            # target_interval 模式生效；轮廓索引步长实际为该值 + 1
+  main_symmetry: "none"                         # none / center / left-right / diagonal；仅目标取点模式使用
   # 固定 SRAF 来源：
   #   lsm：从 lsm_mask_path 分离并按控制点重新渲染（原有行为）
   #   fitted_txt：从拟合后的完整 mask/SRAF-only txt 分离，并原样固定使用
-  sraf_mask_mode: "fitted_txt" 
-  fitted_sraf_txt_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/LSmask/工字型BS0.8.txt"  
-  sraf_cp_interval: 5
-  sraf_min_cps: 8
-  sraf_min_aera: 50
-  msaa_level: 16
-  curve_type: "BS"
-  delta: 0.15
-  dilate_radius: 2
-  interval_line: 5
-  interval_corner: 2
-  mid_weight: 4.0
-  other_weight: 1.0
-  optimize_wepe_only: false
+  sraf_mask_mode: "fitted_txt"                  # lsm / fitted_txt
+  fitted_sraf_txt_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/LSmask/工字型BS0.8.txt"  # fitted_txt 模式必填；可为完整拟合 mask 或 SRAF-only mask
+  sraf_cp_interval: 5                           # SRAF 轮廓采样参数；轮廓索引步长实际为该值 + 1
+  sraf_min_cps: 8                               # 每个 SRAF 连通块尽量保留的最少控制点数
+  sraf_min_aera: 50                             # SRAF 最小连通域面积，单位像素（字段名沿用现有拼写）
+  msaa_level: 16                                # 曲线光栅化抗锯齿级别，仅支持 4 / 16 / 64
+  curve_type: "BS"                              # 主图形曲线类型：OA 折线 / BZ Bezier / BS B样条
+  delta: 0.15                                   # 构建 MEEF 矩阵时控制点的 ±中心差分扰动，单位像素
+  dilate_radius: 2                              # 主图形/SRAF 分离兜底时的 target 膨胀半径，单位像素
+  interval_line: 5                              # 普通边段 EP 点的采样间隔，单位轮廓像素
+  interval_corner: 2                            # EP 点距离角点两侧边界的偏移，单位轮廓像素
+  mid_weight: 4.0                               # 关键/中间 EP 在 MEEF 方程中的权重
+  other_weight: 1.0                             # 非关键 EP 在 MEEF 方程中的权重
+  optimize_wepe_only: false                     # true：仅优化 WEPE 关键点；false：所有 EP 都参与
 
 
