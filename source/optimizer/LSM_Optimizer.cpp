@@ -116,10 +116,10 @@ namespace litho {
             // update the level set function
             _phi_M  = _phi_n_plus_1;
             
-            // if (i % 20 == 0 && i > 0){
-            //     std::cout << "--- reinit SDF at iter " << i << " ---" << std::endl;
-            //     _phi_M = LevelSetUtils::reinit_sdf(_phi_M, _dx, _dy);
-            // }
+            if (i % 20 == 0 && i > 0){
+                std::cout << "--- reinit SDF at iter " << i << " ---" << std::endl;
+                _phi_M = LevelSetUtils::reinit_sdf(_phi_M, _dx, _dy);
+            }
 
             _phi_n = _phi_M;
             

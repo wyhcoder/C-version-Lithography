@@ -9,11 +9,23 @@
 #include <iostream>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 
 
 using namespace litho;
+
+// 使用单引号保护传给 POSIX shell 的路径，避免空格等字符改变命令结构。
+static std::string shell_quote(const std::filesystem::path& path) {
+    const std::string text = path.string();
+    std::string quoted = "'";
+    for (char ch : text) {
+        if (ch == '\'') quoted += "'\"'\"'";
+        else quoted += ch;
+    }
+    return quoted + "'";
+}
 
 int main(int argc, char** argv){
     // std::cout << "========== CTM优化demo ==========\n" << std::endl;
@@ -73,16 +85,34 @@ int main(int argc, char** argv){
     SaveTxt::save_mat(CTM_result.aerial_image, "CTM_result/aerial_image_B.txt");
     SaveTxt::save_mat(CTM_result.wafer_image, "CTM_result/wafer_image_B.txt");
 
-    // 可视化结果
-    std::string base = "/Users/wyh/Desktop/学校/Litho_cpp";
-    std::string cmd = "python3 " + base + "/scripts/show_multi.py "
-                    + base + "/result/CTM_result/gray_mask.txt hot "
-                    + base + "/result/CTM_result/aerial_image_G.txt gray "
-                    + base + "/result/CTM_result/wafer_image_G.txt gray "
-                    + base + "/result/CTM_result/binary_mask.txt gray "
-                    + base + "/result/CTM_result/aerial_image_B.txt gray "
-                    + base + "/result/CTM_result/wafer_image_B.txt gray";
-    std::system(cmd.c_str());
+    // 可视化结果：从 SaveTxt 的真实结果目录反推出项目根，避免写死用户名和路径。
+    namespace fs = std::filesystem;
+    const fs::path result_root = SaveTxt::_result_path();
+    const fs::path project_root = result_root.parent_path();
+    const fs::path script = project_root / "scripts/show_multi.py";
+    const fs::path venv_python = project_root / ".venv/bin/python";
+    const std::string python = fs::is_regular_file(venv_python)
+        ? shell_quote(venv_python)
+        : "python3";
+
+    if (!fs::is_regular_file(script)) {
+        std::cerr << "[warning] 可视化脚本不存在: " << script << '\n';
+    } else {
+        const fs::path ctm_result = result_root / "CTM_result";
+        const std::string cmd =
+            python + " " + shell_quote(script) + " " +
+            shell_quote(ctm_result / "gray_mask.txt") + " hot " +
+            shell_quote(ctm_result / "aerial_image_G.txt") + " gray " +
+            shell_quote(ctm_result / "wafer_image_G.txt") + " gray " +
+            shell_quote(ctm_result / "binary_mask.txt") + " gray " +
+            shell_quote(ctm_result / "aerial_image_B.txt") + " gray " +
+            shell_quote(ctm_result / "wafer_image_B.txt") + " gray";
+        const int status = std::system(cmd.c_str());
+        if (status != 0) {
+            std::cerr << "[warning] 可视化脚本退出状态异常: "
+                      << status << '\n';
+        }
+    }
 
 
 

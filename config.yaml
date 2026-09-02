@@ -57,7 +57,7 @@ meef:
   # 主图形控制点来源：
   #   target_interval：直接在 target 轮廓上按 main_cp_interval 取点
   #   npy：导入 Python 版保存的 .npy（支持 dtype=object 的不等长多轮廓）
-  main_cp_mode: "npy"                            # target_interval / npy
+  main_cp_mode: "target_interval"                            # target_interval / npy
   main_cps_npy_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/CPS/工字型0.8.npy"  # npy 模式必填；每个点按 (y,x) 保存
   main_cp_interval: 7                            # target_interval 模式生效；轮廓索引步长实际为该值 + 1
   main_symmetry: "none"                         # none / center / left-right / diagonal；仅目标取点模式使用
@@ -65,7 +65,7 @@ meef:
   #   lsm：从 lsm_mask_path 分离并按控制点重新渲染（原有行为）
   #   fitted_txt：从拟合后的完整 mask/SRAF-only txt 分离，并原样固定使用
   sraf_mask_mode: "fitted_txt"                  # lsm / fitted_txt
-  fitted_sraf_txt_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/LSmask/工字型BS0.8.txt"  # fitted_txt 模式必填；可为完整拟合 mask 或 SRAF-only mask
+  fitted_sraf_txt_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/outputs/opc/DPS/DPS_data/LSmask/工字型BS0.8.txt"  # fitted_txt 模式必填；可为完整拟合 mask 或 SRAF-only mask
   sraf_cp_interval: 5                           # SRAF 轮廓采样参数；轮廓索引步长实际为该值 + 1
   sraf_min_cps: 8                               # 每个 SRAF 连通块尽量保留的最少控制点数
   sraf_min_aera: 50                             # SRAF 最小连通域面积，单位像素（字段名沿用现有拼写）

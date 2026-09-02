@@ -117,6 +117,8 @@ add_library(litho_core STATIC
     source/utils/meef_pipeline.cpp
     source/utils/gradient.cpp
     source/utils/simulation_parameters.cpp
+    source/utils/sraf_geometry.cpp
+    source/utils/sraf_curve.cpp
 
     # 仿真器及优化算法
     source/litho_model/lithography_simulator.cpp
@@ -201,6 +203,10 @@ target_link_libraries(demo_CTM_parallel_benchmark litho_core)
 add_executable(demo_LSM demo/demo_LSM.cpp)
 target_link_libraries(demo_LSM litho_core)
 
+# SRAF 几何前处理诊断：真实 LSM mask -> SRAF 骨架/路径/控制点统计。
+add_executable(demo_sraf_geometry demo/demo_sraf_geometry.cpp)
+target_link_libraries(demo_sraf_geometry litho_core)
+
 # 从 YAML 初始化、构建 MEEF 矩阵或执行完整 MEEF 优化的主 demo。
 add_executable(demo_MEEF_Optimizer_init demo/demo_MEEF_Optimizer_init.cpp)
 target_link_libraries(demo_MEEF_Optimizer_init litho_core)
@@ -214,6 +220,18 @@ add_executable(demo_fft_shift demo/demo_fftshift.cpp)
 target_link_libraries(demo_fft_shift litho_core)
 add_executable(demo_msaa_cp examples/demo_msaa_cp.cpp)
 target_link_libraries(demo_msaa_cp litho_core)
+
+# SRAF 几何前处理和曲线半宽重建的独立回归测试。
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(test_sraf_geometry tests/test_sraf_geometry.cpp)
+    target_link_libraries(test_sraf_geometry litho_core)
+    add_test(NAME sraf_geometry COMMAND test_sraf_geometry)
+
+    add_executable(test_sraf_curve tests/test_sraf_curve.cpp)
+    target_link_libraries(test_sraf_curve litho_core)
+    add_test(NAME sraf_curve COMMAND test_sraf_curve)
+endif()
 
 # ============================================================================
 # 7. 运行时配置和资源
