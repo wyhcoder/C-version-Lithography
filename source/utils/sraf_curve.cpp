@@ -144,6 +144,7 @@ SrafParametricCurve SrafCurve::fit(
     if (!curve.closed) {
         using Spline2d = Eigen::Spline<double, 2>;
         Eigen::Matrix<double, 2, Eigen::Dynamic> controls(2, point_count);
+        // 两行的控制点矩阵
         for (int i = 0; i < point_count; ++i) {
             controls(0, i) = control_points[static_cast<std::size_t>(i)].x;
             controls(1, i) = control_points[static_cast<std::size_t>(i)].y;
@@ -155,8 +156,10 @@ SrafParametricCurve SrafCurve::fit(
         knots.tail(curve.degree + 1).setOnes();
         for (int i = curve.degree + 1; i < point_count; ++i) {
             knots(i) = static_cast<double>(i - curve.degree) /
-                       static_cast<double>(point_count - curve.degree);
+                        static_cast<double>(point_count - curve.degree);
         }
+        
+
         const Spline2d spline(knots, controls);
 
         double control_polygon_length = 0.0;
@@ -164,6 +167,7 @@ SrafParametricCurve SrafCurve::fit(
             control_polygon_length += cv::norm(control_points[static_cast<std::size_t>(i)] -
                                                control_points[static_cast<std::size_t>(i - 1)]);
         }
+
         const int sample_count = std::max(2, static_cast<int>(std::ceil(control_polygon_length / sample_spacing)) + 1);
         for (int i = 0; i < sample_count; ++i) {
             const double u = static_cast<double>(i) / static_cast<double>(sample_count - 1);

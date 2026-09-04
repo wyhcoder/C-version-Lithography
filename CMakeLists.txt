@@ -130,6 +130,7 @@ add_library(litho_core STATIC
     source/optimizer/LSM_Optimizer.cpp
     source/utils/pv_band_computer.cpp
     source/optimizer/MEEF_Optimizer.cpp
+    source/optimizer/SRAF_Optimizer.cpp
 )
 
 # 为 litho_core 添加头文件搜索路径。
@@ -206,6 +207,10 @@ target_link_libraries(demo_LSM litho_core)
 # SRAF 几何前处理诊断：真实 LSM mask -> SRAF 骨架/路径/控制点统计。
 add_executable(demo_sraf_geometry demo/demo_sraf_geometry.cpp)
 target_link_libraries(demo_sraf_geometry litho_core)
+
+# SRAF 优化器初始化：读取 LSM mask，提取中心线并保存 (x,y) 控制点。
+add_executable(demo_SRAF_Optimizer_init demo/demo_SRAF_Optimizer_init.cpp)
+target_link_libraries(demo_SRAF_Optimizer_init litho_core)
 
 # 从 YAML 初始化、构建 MEEF 矩阵或执行完整 MEEF 优化的主 demo。
 add_executable(demo_MEEF_Optimizer_init demo/demo_MEEF_Optimizer_init.cpp)
