@@ -150,16 +150,16 @@ void FFT::from_fftw(const fftw_complex* src, Eigen::MatrixXcd& dst) {
 }
 
 void FFT::fftshift_inplace(Eigen::MatrixXcd& X) {
-    // numpy的fftshift 是向上取整
-    const int r2 = static_cast<int>(X.rows() +1 ) / 2;
-    const int c2 = static_cast<int>(X.cols()  +1) / 2;
+    // numpy的fftshift 是向下取整
+    const int r2 = static_cast<int>(X.rows()  / 2);
+    const int c2 = static_cast<int>(X.cols()  / 2);
     X = roll_cols(roll_rows(X, r2), c2);
 }
 
 void FFT::ifftshift_inplace(Eigen::MatrixXcd& X) {
-    // numpy的ifftshift 是向下取整，和fftshift形成一个互逆操作
-    const int r2 = static_cast<int>(X.rows()  / 2);
-    const int c2 = static_cast<int>(X.cols()  / 2);
+    // numpy的ifftshift 是向上取整，和fftshift形成一个互逆操作
+    const int r2 = static_cast<int>(X.rows()+1)  / 2;
+    const int c2 = static_cast<int>(X.cols()+1)  / 2;
     X = roll_cols(roll_rows(X, r2), c2);
 }
 

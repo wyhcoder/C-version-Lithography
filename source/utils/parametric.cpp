@@ -1,8 +1,50 @@
 #include "parametric.h"
+
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
 namespace litho {
+namespace {
+
+// 计算闭合周期均匀 B 样条上的一个点；控制点坐标格式为 (y,x)。
+Eigen::Vector2d periodic_b_spline_point(
+    const Polygon& controls,
+    int degree,
+    int segment,
+    double t) {
+    const int count = static_cast<int>(controls.rows());
+    const auto point_at = [&](int index) {
+        const int wrapped = (index % count + count) % count;
+        return controls.row(wrapped).transpose();
+    };
+
+    if (degree == 1) {
+        return (1.0 - t) * point_at(segment) +
+               t * point_at(segment + 1);
+    }
+    if (degree == 2) {
+        const double b0 = 0.5 * (1.0 - t) * (1.0 - t);
+        const double b1 = 0.5 * (-2.0 * t * t + 2.0 * t + 1.0);
+        const double b2 = 0.5 * t * t;
+        return b0 * point_at(segment - 1) +
+               b1 * point_at(segment) +
+               b2 * point_at(segment + 1);
+    }
+
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+    const double b0 = (1.0 - 3.0 * t + 3.0 * t2 - t3) / 6.0;
+    const double b1 = (4.0 - 6.0 * t2 + 3.0 * t3) / 6.0;
+    const double b2 = (1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3) / 6.0;
+    const double b3 = t3 / 6.0;
+    return b0 * point_at(segment - 1) +
+           b1 * point_at(segment) +
+           b2 * point_at(segment + 1) +
+           b3 * point_at(segment + 2);
+}
+
+}  // namespace
 
 ParametricDemo::ParametricDemo(const std::string& curve_type,
                                const Eigen::MatrixXd& mask_template,
@@ -23,50 +65,32 @@ Polygons ParametricDemo::get_curve_points(const Polygons& cps,
                                            int num_points) const {
     if (_curve_type == "OA") return cps;
     if (_curve_type == "BZ") return compute_BZ_cps_and_points(cps);
-    if (_curve_type == "BS") return b_spline(cps, 0.3, num_points);
+    if (_curve_type == "BS") return b_spline(cps, num_points);
     return cps;
 }
 
-// ── Catmull-Rom B 样条（周期性，替代 scipy.splprep per=True）──────────────
-// scipy 的 s 参数控制平滑量；这里 smoothing 参数没有直接等价物，
-// Catmull-Rom 通过 tension 参数（默认 0.5）控制曲线紧张度。
+// ── 周期均匀 B 样条 ──────────────────────────────────────────────────────
+// 主图形轮廓是闭合的；输入点直接作为控制点，中间控制点不要求位于曲线上。
 Polygons ParametricDemo::b_spline(const Polygons& contours,
-                                   double /*smoothing*/,
                                    int num_points) const {
     Polygons result;
     for (const auto& contour : contours) {
-        int n = static_cast<int>(contour.rows());
-        if (n < 2) { result.push_back(contour); continue; }
+        const int point_count = static_cast<int>(contour.rows());
+        if (point_count < 2) {
+            result.push_back(contour);
+            continue;
+        }
 
         Eigen::MatrixXd fitted(num_points, 2);
-        double tension = 0.5;   // Catmull-Rom 标准张力
+        const int degree = std::min(3, point_count - 1);
 
         for (int k = 0; k < num_points; ++k) {
-            // t ∈ [0, n)，周期映射
-            double global_t = static_cast<double>(k) / num_points * n;
-            int seg = static_cast<int>(std::floor(global_t)) % n;
-            double t = global_t - std::floor(global_t);
-
-            // 4个控制点（周期索引）
-            auto P = [&](int i) -> Eigen::Vector2d {
-                return contour.row(((i % n) + n) % n).transpose();
-            };
-            Eigen::Vector2d p0 = P(seg - 1);
-            Eigen::Vector2d p1 = P(seg);
-            Eigen::Vector2d p2 = P(seg + 1);
-            Eigen::Vector2d p3 = P(seg + 2);
-
-            // Catmull-Rom 矩阵计算
-            double t2 = t * t, t3 = t2 * t;
-            Eigen::Vector2d pt =
-                0.5 * ((2*p1) +
-                       (-p0 + p2) * t +
-                       (2*p0 - 5*p1 + 4*p2 - p3) * t2 +
-                       (-p0 + 3*p1 - 3*p2 + p3) * t3);
-            // tension 参数缩放切线（标准 Catmull-Rom 不用，这里用于兼容）
-            (void)tension;
-
-            fitted.row(k) = pt.transpose();
+            const double global_t =
+                static_cast<double>(k) / num_points * point_count;
+            const int segment = static_cast<int>(std::floor(global_t));
+            const double local_t = global_t - segment;
+            fitted.row(k) = periodic_b_spline_point(
+                contour, degree, segment, local_t).transpose();
         }
         result.push_back(fitted);
     }

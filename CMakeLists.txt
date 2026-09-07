@@ -77,6 +77,24 @@ find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED HINTS /opt/homebrew/lib/cmake/opencv4)
 find_package(yaml-cpp REQUIRED HINTS /opt/homebrew/lib/cmake/yaml-cpp)
 
+# 优先使用系统安装的 libcmaes；找不到时下载固定提交，保证构建可复现。
+find_package(libcmaes CONFIG QUIET)
+if(NOT TARGET libcmaes::cmaes)
+    include(FetchContent)
+    set(LIBCMAES_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(LIBCMAES_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
+    set(LIBCMAES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LIBCMAES_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(LIBCMAES_USE_OPENMP OFF CACHE BOOL "" FORCE)
+    set(LIBCMAES_ENABLE_SURROG OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        libcmaes
+        GIT_REPOSITORY https://github.com/CMA-ES/libcmaes.git
+        GIT_TAG 6a53cd562c85dc6df3b8df317be3ecb415240c2d
+    )
+    FetchContent_MakeAvailable(libcmaes)
+endif()
+
 # 当前环境没有统一使用 FFTW3 的 CMake imported target，因此分别查找：
 #   FFTW3_INCLUDE_DIR：包含 fftw3.h 的头文件目录；
 #   FFTW3_LIBRARY：实际链接的 fftw3 库文件。
@@ -160,6 +178,7 @@ target_link_libraries(litho_core PUBLIC
     ${FFTW3_LIBRARY}
     ${OpenCV_LIBS}
     yaml-cpp::yaml-cpp
+    libcmaes::cmaes
 )
 
 # OpenMP::OpenMP_CXX 同时携带编译选项和链接库，例如 -fopenmp/libomp。
@@ -236,6 +255,10 @@ if(BUILD_TESTING)
     add_executable(test_sraf_curve tests/test_sraf_curve.cpp)
     target_link_libraries(test_sraf_curve litho_core)
     add_test(NAME sraf_curve COMMAND test_sraf_curve)
+
+    add_executable(test_parametric tests/test_parametric.cpp)
+    target_link_libraries(test_parametric litho_core)
+    add_test(NAME parametric_b_spline COMMAND test_parametric)
 endif()
 
 # ============================================================================

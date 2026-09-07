@@ -20,9 +20,7 @@ struct ContourBezierData {
     int image_width;
 };
 
-// ── B 样条拟合结果 ────────────────────────────────────────────────────────
-// 注：C++ 标准库无 scipy.splprep，使用 Catmull-Rom 样条替代（效果相近）
-//     若要完全对齐 scipy，可接入外部库（如 tinyspline）
+// ── 参数化曲线采样结果 ────────────────────────────────────────────────────
 using CurvePoints = Polygon;  // [N x 2] (y,x)
 
 class ParametricDemo {
@@ -38,10 +36,10 @@ public:
     // 只返回曲线点（不光栅化）
     Polygons get_curve_points(const Polygons& cps, int num_points = 200) const;
 
-    // ── B 样条（Catmull-Rom 周期性）──────────────────────────────────────
+    // ── 周期均匀 B 样条 ──────────────────────────────────────────────────
+    // 每个输入轮廓按闭合曲线处理，输入点直接作为 B 样条控制点。
     Polygons b_spline(const Polygons& contours,
-                      double smoothing = 0.3,
-                      int num_points   = 100) const;
+                      int num_points = 100) const;
 
     // ── Bezier ──────────────────────────────────────────────────────────
     std::vector<PointTangent> generate_bezier_tangent(

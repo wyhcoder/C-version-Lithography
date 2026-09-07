@@ -30,8 +30,9 @@ namespace litho {
                 throw std::invalid_argument("PvbandComputer: invalid dose/defocus sampling parameters");
             }
 
-            // 无离焦范围或只有一个采样点时，统一使用 nominal focus z=0。
-            if (_defocus_range == 0.0 || _defocus_step == 1) {
+            // dose_only 不需要离焦采样，只预计算 nominal focus 的 cache。
+            if (_mode == "dose_only" ||
+                _defocus_range == 0.0 || _defocus_step == 1) {
                 _defocus_list = {0.0};
             } else {
                 // range 表示总焦深范围：[-range/2, +range/2]。
@@ -60,6 +61,7 @@ namespace litho {
         _plan_inv = fftw_plan_dft_2d(N, N, _fft_in, _fft_out,
                                  FFTW_BACKWARD, FFTW_MEASURE);
         (void)sz;  // sz 保留以防将来使用
+        _build_defocus_caches();
         std::cout<<"pvband computer init"<<std::endl;
         };
 
@@ -98,42 +100,43 @@ namespace litho {
         return z4_coeff;
     }
 
-    void PvbandComputer::_recompute_cache_at_defocus(double defocus){
-        std::unordered_map<int, double> temp_aberrations = _litho_simulator._params.optics.aberrations;
-        temp_aberrations[4] = _compute_z4_coefficient(defocus) + _litho_simulator._params.optics.aberrations[4];
-        // 重新计算 pupil
-        _pupil_params.defocus_nm = defocus;
-        _pupil_params.zernike_coeffs = temp_aberrations;
-        Pupil temp_pupil(_pupil_params,
-                         _litho_simulator._grid.grid_coords().Fx_2d,
-                         _litho_simulator._grid.grid_coords().Fy_2d);
+    void PvbandComputer::_build_defocus_caches(){
+        _defocus_caches.clear();
+        _defocus_caches.reserve(_defocus_list.size());
 
-        // LithoPrepare 含 FFTW plan 不能作为持久成员反复赋值，
-        // 用局部对象生成 cache，再拷贝到成员（ImagingCache 是纯数据）
-        LithoPrepare local_prepare(_litho_simulator._grid, temp_pupil,
-                                   _litho_simulator._source, true);
-        _temp_cache = local_prepare.cache();
+        for (double defocus : _defocus_list) {
+            std::unordered_map<int, double> temp_aberrations =
+                _litho_simulator._params.optics.aberrations;
+            temp_aberrations[4] =
+                _compute_z4_coefficient(defocus) +
+                _litho_simulator._params.optics.aberrations[4];
+
+            _pupil_params.defocus_nm = defocus;
+            _pupil_params.zernike_coeffs = temp_aberrations;
+            Pupil temp_pupil(_pupil_params,
+                             _litho_simulator._grid.grid_coords().Fx_2d,
+                             _litho_simulator._grid.grid_coords().Fy_2d);
+
+            LithoPrepare local_prepare(_litho_simulator._grid, temp_pupil,
+                                       _litho_simulator._source, true);
+            _defocus_caches.push_back(local_prepare.cache());
+        }
     };
     
     Pvband_result PvbandComputer::compute_pvband(Eigen::MatrixXd& mask) {
         std::vector<double> thresholds;
-        std::vector<double> defocuses;
 
         if (_mode == "dose_only") {
             thresholds = {_threshold_low, _threshold_high};
-            defocuses = {0.0};
         } else if (_mode == "defocus_only") {
             thresholds = {_threshold};
-            defocuses = _defocus_list;
         } else {  // full
             thresholds = {_threshold_low, _threshold, _threshold_high};
-            defocuses = _defocus_list;
         }
 
         bool initialized = false;
-        for (double defocus : defocuses) {
-            _recompute_cache_at_defocus(defocus);
-            Imaging imaging(_temp_cache);
+        for (const ImagingCache& cache : _defocus_caches) {
+            Imaging imaging(cache);
             const Eigen::MatrixXd aerial_image =
                 imaging.compute(mask, _threshold, _alpha).aerial_image;
 
@@ -234,21 +237,17 @@ namespace litho {
 
     Eigen::MatrixXd PvbandComputer::compute_pvloss_gradient(Eigen::MatrixXd& mask) {
         std::vector<double> thresholds;
-        std::vector<double> defocuses;
 
         if (_mode == "dose_only") {
             thresholds = {_threshold_low, _threshold_high};
-            defocuses = {0.0};
         } else if (_mode == "defocus_only") {
             thresholds = {_threshold};
-            defocuses = _defocus_list;
         } else {  // full
             thresholds = {_threshold_low, _threshold, _threshold_high};
-            defocuses = _defocus_list;
         }
 
         const int N = _litho_simulator._grid.size();
-        const int defocus_count = static_cast<int>(defocuses.size());
+        const int defocus_count = static_cast<int>(_defocus_caches.size());
         const int threshold_count = static_cast<int>(thresholds.size());
         if (defocus_count == 0 || threshold_count == 0) {
             throw std::runtime_error("PvbandComputer: no process corners for PV gradient");
@@ -264,8 +263,8 @@ namespace litho {
         bool initialized = false;
 
         for (int di = 0; di < defocus_count; ++di) {
-            _recompute_cache_at_defocus(defocuses[di]);
-            Imaging imaging(_temp_cache);
+            const ImagingCache& cache = _defocus_caches[di];
+            Imaging imaging(cache);
             const Eigen::MatrixXd aerial_image =
                 imaging.compute(mask, _threshold, _alpha).aerial_image;
 
@@ -310,8 +309,8 @@ namespace litho {
         Eigen::MatrixXd total_gradient = Eigen::MatrixXd::Zero(N, N);
 
         for (int di = 0; di < defocus_count; ++di) {
-            _recompute_cache_at_defocus(defocuses[di]);
-            Imaging imaging(_temp_cache);
+            const ImagingCache& cache = _defocus_caches[di];
+            Imaging imaging(cache);
             const Eigen::MatrixXd aerial_image =
                 imaging.compute(mask, _threshold, _alpha).aerial_image;
             Eigen::MatrixXd dLdI = Eigen::MatrixXd::Zero(N, N);
@@ -340,7 +339,7 @@ namespace litho {
             // 没有 winner，或 max/min 在该 defocus 完全抵消时，无需做昂贵的反传。
             if (has_contribution && dLdI.squaredNorm() > 0.0) {
                 total_gradient += _backpropagate(
-                    dLdI, imaging.get_electric_field(), _temp_cache);
+                    dLdI, imaging.get_electric_field(), cache);
             }
         }
 

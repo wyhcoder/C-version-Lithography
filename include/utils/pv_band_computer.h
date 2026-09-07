@@ -49,7 +49,8 @@ namespace litho {
 
             double _compute_z4_coefficient(double defocus);
 
-            void _recompute_cache_at_defocus(double defocus);
+            // 构造时为每个离焦采样点计算一次 SOCS cache，后续重复使用。
+            void _build_defocus_caches();
 
             Eigen::MatrixXd _sigmoid_derivative(const Eigen::MatrixXd& wafer) const;
 
@@ -79,7 +80,8 @@ namespace litho {
             Eigen::MatrixXd _pv_map;
             Max_Min_wafer _max_min_wafer;
             Params _pupil_params;
-            ImagingCache _temp_cache;
+            // 与 _defocus_list 按相同下标一一对应。
+            std::vector<ImagingCache> _defocus_caches;
 
             fftw_complex *_fft_in;
             fftw_complex *_fft_out;

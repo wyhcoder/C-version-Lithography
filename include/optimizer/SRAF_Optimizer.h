@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace litho {
 
@@ -39,6 +40,27 @@ struct SRAFConfig {
     double maximum_half_width = 8.0;
     int samples_per_axis = 4;
 
+    // 所有 SRAF 共用一个半宽时的一维搜索参数。
+    double shared_width_min = 1.0;
+    double shared_width_max = 4.0;
+    double shared_width_coarse_step = 0.5;
+    double shared_width_fine_step = 0.1;
+
+    // 每根 SRAF 独立宽度时使用有边界 CMA-ES。
+    double independent_width_min = 1.0;
+    double independent_width_max = 4.0;
+    double cma_initial_sigma = 0.375;
+    int cma_population_size = 12;
+    int cma_max_evaluations = 200;
+    double cma_tolerance_x = 1e-2;
+    double cma_tolerance_fun = 1e-3;
+    // libcmaes 中 0 表示随机种子；使用正数可复现实验。
+    unsigned int cma_seed = 1;
+
+    double weight_pvband = 0.7;
+    double weight_wepe = 0.25;
+    double weight_pe = 0.05;
+
     // 为后续 PV Band 宽度优化预留；当前初始化阶段不使用。
     double mid_weight = 4.0;
     double other_weight = 1.0;
@@ -59,7 +81,7 @@ public:
         const ImagingCache& cache,
         const SRAFConfig& config);
 
-    // 当前只搭建了评价流程，宽度搜索和更新迭代尚未接入。
+    // 共享宽度使用粗到细的一维搜索，独立宽度使用 CMA-ES。
     void optimize();
 
     // SRAF 几何中的 cv::Point2d 为 (x,y)；main_control_points 为 [y,x]。
@@ -80,6 +102,16 @@ public:
     }
     const std::vector<double>& initial_half_widths() const noexcept {
         return _initial_half_widths;
+    }
+    // 共享宽度模式的结果；独立模式使用 optimized_half_widths()。
+    double optimized_half_width() const noexcept {
+        return _optimized_half_width;
+    }
+    const std::vector<double>& optimized_half_widths() const noexcept {
+        return _optimized_half_widths;
+    }
+    const Eigen::MatrixXd& optimized_mask() const noexcept {
+        return _optimized_mask;
     }
     int main_pixel_count() const noexcept { return _main_pixels; }
     int sraf_pixel_count() const noexcept { return _sraf_pixels; }
@@ -119,6 +151,9 @@ private:
     Eigen::MatrixXd _rendered_main_mask;
     Eigen::MatrixXd _rendered_sraf_mask;
     Eigen::MatrixXd _initial_mask;
+    double _optimized_half_width = 0.0;
+    std::vector<double> _optimized_half_widths;
+    Eigen::MatrixXd _optimized_mask;
     int _main_pixels = 0;
     int _sraf_pixels = 0;
     std::size_t _main_control_point_count = 0;

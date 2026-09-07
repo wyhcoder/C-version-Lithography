@@ -291,7 +291,7 @@ void LithoPrepare::_compute_socs_kernels(){
     for (int k = 0; k < S.size(); ++k) total_energy += S(k) * S(k);
 
     #ifdef _OPENMP
-    std::cout << "OpenMP 已启用，版本：" << _OPENMP << '\n';
+    std::cout << "OpenMP 已启用，目前是SOCS核函数准备阶段，版本：" << _OPENMP << '\n';
     #else
     std::cout << "OpenMP 未启用，当前为单线程\n";
     #endif

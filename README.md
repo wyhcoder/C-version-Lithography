@@ -14,6 +14,9 @@ brew install eigen fftw opencv libomp cmake
 sudo apt install libeigen3-dev libfftw3-dev libopencv-dev cmake build-essential
 ```
 
+SRAF 独立宽度优化使用 `libcmaes`。如果系统没有安装，CMake 会在第一次
+配置时从官方仓库下载项目固定的版本，因此首次配置需要网络连接。
+
 ## 编译
 
 ### Release 模式（性能最优，~20x 提速）
