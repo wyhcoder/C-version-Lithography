@@ -1,11 +1,11 @@
 # =====================================================
 # 仿真系统级参数 (Simulation System)
 # =====================================================
-PATTERN_NAME: &PATTERN_NAME "工字型"   # YAML 锚点：同时供 mask.image_name 和 meef.pattern_name 引用
+PATTERN_NAME: &PATTERN_NAME "matrix_0525"   # YAML 锚点：同时供 mask.image_name 和 meef.pattern_name 引用
 
 system:
   wavelength_nm: 193.0              # 曝光光源波长，单位 nm
-  pixel_size_nm: 4.0                # mask/晶圆计算网格的像素尺寸，单位 nm/像素
+  pixel_size_nm: 6.0                # mask/晶圆计算网格的像素尺寸，单位 nm/像素
   grid_size_pixel: 257              # 成像计算矩阵边长；当前 mask 和 LSM 均应为 257×257
 
 # =====================================================
@@ -47,7 +47,7 @@ meef:
   output_dir: "result/MEEF_result/test"           # 结果目录；相对路径以项目根目录为基准
   config_snapshot_name: "config_used.yaml"       # 本次实际配置快照名，只能是文件名
   console_log_name: "console_output.log"         # 终端输出日志名，只能是文件名
-  lsm_mask_path: "assets/lsm_mask/ls_image工字型.txt"  # 初始完整 LSM mask 文本，尺寸须与 target 一致
+  lsm_mask_path: "result/LSM_result/LSM_mask.txt"  # 初始完整 LSM mask 文本，尺寸须与 target 一致
   run_mode: "--optimize"                         # --init-only：仅初始化；--build-meef：只建矩阵；--optimize：完整优化
   pattern_name: *PATTERN_NAME                     # MEEF 使用的目标图案，必须能找到 target_pattern/<名称>.bmp
   move_strategy: "xy"                            # 控制点移动方式；当前优化器仅支持 xy 解耦移动
@@ -64,7 +64,7 @@ meef:
   # 固定 SRAF 来源：
   #   lsm：从 lsm_mask_path 分离并按控制点重新渲染（原有行为）
   #   fitted_txt：从拟合后的完整 mask/SRAF-only txt 分离，并原样固定使用
-  sraf_mask_mode: "fitted_txt"                  # lsm / fitted_txt
+  sraf_mask_mode: "lsm"                  # lsm / fitted_txt
   fitted_sraf_txt_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/outputs/opc/DPS/DPS_data/LSmask/工字型BS0.8.txt"  # fitted_txt 模式必填；可为完整拟合 mask 或 SRAF-only mask
   sraf_cp_interval: 5                           # SRAF 轮廓采样参数；轮廓索引步长实际为该值 + 1
   sraf_min_cps: 8                               # 每个 SRAF 连通块尽量保留的最少控制点数

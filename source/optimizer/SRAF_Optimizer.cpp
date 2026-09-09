@@ -273,7 +273,6 @@ SRAF_Optimizer::SRAF_Optimizer(
     for (const auto& centerline : _sraf_geometry_result.centerlines) {
         _control_point_count += centerline.control_points.size();
     }
-
     std::cout << "\nSRAF geometry initialization\n"
               << "  pattern           : " << _sraf_config.pattern_name << '\n'
               << "  mask size         : " << _lsm_mask.rows() << " x "
@@ -298,7 +297,21 @@ SRAF_Optimizer::SRAF_Optimizer(
                   << " | " << centerline.path.diagnostic << '\n';
     }
 
-    // 保存初始化结果，并为后续 EPE 与宽度优化准备数据。
+    // 非法骨架不能拟合为一条参数曲线：将对应 component 从优化几何中删除，
+    // 其余合法 component 继续建立距离缓存并参与宽度优化。
+    drop_invalid_geometry_components();
+    _control_point_count = 0;
+    for (const auto& centerline : _sraf_geometry_result.centerlines) {
+        _control_point_count += centerline.control_points.size();
+    }
+    std::cout << "  optimizable SRAFs : "
+              << _sraf_geometry_result.centerlines.size() << '\n'
+              << "  retained controls : " << _control_point_count << '\n'
+              << "  retained skeleton : "
+              << cv::countNonZero(_sraf_geometry_result.skeleton_mask)
+              << " pixels\n";
+
+    // 保存过滤后的初始化结果，并为后续 EPE 与宽度优化准备数据。
     validate_geometry_result();
     save_main_control_points();
     save_control_points();
@@ -308,27 +321,55 @@ SRAF_Optimizer::SRAF_Optimizer(
     save_initial_masks();
 }
 
-// 检查是否提取到 SRAF，以及每个分量是否具有有效骨架和控制点。
+// 删除不能表示为单条参数曲线的 SRAF component，并重建保留骨架的并集。
+// component_id 保留提取时的原始编号，保证独立宽度及 CSV 输出仍可追溯。
+void SRAF_Optimizer::drop_invalid_geometry_components() {
+    auto& centerlines = _sraf_geometry_result.centerlines;
+    _dropped_component_ids.clear();
+
+    std::vector<SrafCenterlineGeometry> valid_centerlines;
+    valid_centerlines.reserve(centerlines.size());
+    cv::Mat retained_skeleton = cv::Mat::zeros(
+        _sraf_geometry_result.skeleton_mask.size(), CV_8UC1);
+
+    for (auto& centerline : centerlines) {
+        if (!centerline.path.valid || centerline.control_points.empty()) {
+            _dropped_component_ids.push_back(centerline.component_id);
+            continue;
+        }
+        cv::bitwise_or(
+            retained_skeleton,
+            centerline.skeleton_mask,
+            retained_skeleton);
+        valid_centerlines.push_back(std::move(centerline));
+    }
+
+    centerlines = std::move(valid_centerlines);
+    _sraf_geometry_result.skeleton_mask = std::move(retained_skeleton);
+
+    if (!_dropped_component_ids.empty()) {
+        std::cout << "\n  warning: dropped invalid SRAF component(s): ";
+        for (std::size_t i = 0; i < _dropped_component_ids.size(); ++i) {
+            if (i != 0) std::cout << ", ";
+            std::cout << _dropped_component_ids[i];
+        }
+        std::cout << '\n';
+    }
+}
+
+// 检查过滤后是否还存在可用于宽度优化的有效骨架和控制点。
 void SRAF_Optimizer::validate_geometry_result() const {
     if (_sraf_geometry_result.centerlines.empty()) {
         throw std::runtime_error(
-            "SRAF_Optimizer: no SRAF component was extracted from the input mask");
+            "SRAF_Optimizer: no valid SRAF component remains after dropping invalid skeletons");
     }
 
-    std::ostringstream invalid_components;
-    bool first = true;
     for (const auto& centerline : _sraf_geometry_result.centerlines) {
-        if (centerline.path.valid && !centerline.control_points.empty()) {
-            continue;
+        if (!centerline.path.valid || centerline.control_points.empty()) {
+            throw std::logic_error(
+                "SRAF_Optimizer: invalid component remained after geometry filtering: " +
+                std::to_string(centerline.component_id));
         }
-        if (!first) invalid_components << ", ";
-        invalid_components << centerline.component_id;
-        first = false;
-    }
-    if (!first) {
-        throw std::runtime_error(
-            "SRAF_Optimizer: invalid SRAF centerline/control points in component(s): " +
-            invalid_components.str());
     }
 }
 

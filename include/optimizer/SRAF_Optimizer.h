@@ -25,7 +25,7 @@ struct SRAFConfig {
     // 主图形控制点的曲线类型：OA 折线、BZ Bezier、BS B 样条。
     std::string curve_type = "BS";
     // false：所有 SRAF 共用一个半宽；true：每根 SRAF 有独立半宽。
-    bool independent_sraf_widths = false;
+    bool independent_sraf_widths = true;
 
     // SRAF 几何提取参数。
     double foreground_threshold = 1e-6;
@@ -121,6 +121,10 @@ public:
     std::size_t control_point_count() const noexcept {
         return _control_point_count;
     }
+    // 因骨架分叉、路径不连续或控制点为空而从宽度优化中删除的原始 component id。
+    const std::vector<int>& dropped_component_ids() const noexcept {
+        return _dropped_component_ids;
+    }
 
     static cv::Mat eigen_mask_to_u8(const Eigen::MatrixXd& mask);
 
@@ -130,6 +134,7 @@ private:
         const std::string& path,
         int image_rows,
         int image_cols);
+    void drop_invalid_geometry_components();
     void validate_geometry_result() const;
     void render_initial_masks();
     void save_control_points() const;
@@ -148,6 +153,7 @@ private:
     std::vector<SrafParametricCurve> _sraf_curves;
     std::vector<SrafDistanceCache> _sraf_distance_caches;
     std::vector<double> _initial_half_widths;
+    std::vector<int> _dropped_component_ids;
     Eigen::MatrixXd _rendered_main_mask;
     Eigen::MatrixXd _rendered_sraf_mask;
     Eigen::MatrixXd _initial_mask;

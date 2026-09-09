@@ -1,4 +1,6 @@
 #include "level_set_utils.h"
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <opencv2/opencv.hpp>
@@ -52,21 +54,32 @@ namespace litho {
         const double c13 = 1.0 / 3.0,  c76 = 7.0 / 6.0,  c116 = 11.0 / 6.0;
         const double c16 = 1.0 / 6.0,  c56 = 5.0 / 6.0;
         const double cS1 = 13.0 / 12.0, cS2 = 0.25;
-        double g1, g2, g3;
-        if (dir == "minus") { g1 = 0.1; g2 = 0.6; g3 = 0.3; }   // minus
-        else            { g1 = 0.3; g2 = 0.6; g3 = 0.1; }   // plus
+        // plus 已经通过反转五个差分来镜像候选模板，所以两种方向使用同一组
+        // 候选编号和理想权重；不能再交换 g1/g3，否则会发生双重镜像。
+        const double g1 = 0.1;
+        const double g2 = 0.6;
+        const double g3 = 0.3;
 
         const double eps0 = 1e-6;
         const double eps_min = 1e-99;
 
         // 输出原始点数 N_orig
-        // Python: v_slices[i] = D1[i : i+N_orig]，即第 i 个输出点用 D1(i)..D1(i+4)
+        // minus 使用点 i 左偏的五个差分 D1(i)..D1(i+4)；plus 的镜像模板
+        // 必须右移一个差分，使用 D1(i+1)..D1(i+5)，再反向排列。
         for (int i = 0; i < N_orig; ++i){
             double v1, v2, v3, v4, v5;
             if (dir == "plus"){
-                v1 = D1(i + 4); v2 = D1(i + 3); v3 = D1(i + 2); v4 = D1(i + 1); v5 = D1(i);
+                v1 = D1(i + 5);
+                v2 = D1(i + 4);
+                v3 = D1(i + 3);
+                v4 = D1(i + 2);
+                v5 = D1(i + 1);
             }else{
-                v1 = D1(i); v2 = D1(i + 1); v3 = D1(i + 2); v4 = D1(i + 3); v5 = D1(i + 4);
+                v1 = D1(i);
+                v2 = D1(i + 1);
+                v3 = D1(i + 2);
+                v4 = D1(i + 3);
+                v5 = D1(i + 4);
             }
             // 三个子模版的线性组合
             double d1 = c13 * v1 - c76 * v2 + c116 * v3;
@@ -126,31 +139,21 @@ namespace litho {
 
     }
 
-    Eigen::MatrixXd LevelSetUtils::_select_upwind_deriv(const Eigen::MatrixXd &Vn, const Eigen::MatrixXd &der_minus, const Eigen::MatrixXd &der_plus){
-        Eigen::MatrixXd result = Vn;
-        for (int i = 0; i < Vn.rows(); ++i){
-            for (int j = 0; j < Vn.cols(); ++j){
-                if (Vn(i, j) == 0){
-                    result(i, j) = 0;
-                    continue;
-                }
-                else if (Vn(i, j) > 0){              // Python: Vn > 0 → der_minus
-                    result(i, j) = der_minus(i, j);
-                }else{                                 // Vn < 0 → der_plus
-                    result(i, j) = der_plus(i, j);
-                }
-            }
-        }
-        return result;
-    }
-
     Evolve_Params LevelSetUtils::evolve_normal_WENO_godunov(const Eigen::MatrixXd &phi, const Eigen::MatrixXd &Vn, double dy, double dx){
+        if (phi.rows() != Vn.rows() || phi.cols() != Vn.cols()){
+            throw std::invalid_argument(
+                "evolve_normal_WENO_godunov: phi and Vn sizes must match");
+        }
+        if (phi.size() == 0 || dx <= 0.0 || dy <= 0.0){
+            throw std::invalid_argument(
+                "evolve_normal_WENO_godunov: grid must be non-empty and dx/dy must be positive");
+        }
 
-        // 与 Python 对齐: 外层 pad 3（两个轴），der_weno5 内部再 pad 3
-        Eigen::MatrixXd data_ext = pad_edge(pad_edge(phi, 3, 0), 3, 1);  // (N+6, N+6)
-        Eigen::MatrixXd Vn_ext   = pad_edge(pad_edge(Vn,  3, 0), 3, 1);  // (N+6, N+6)
+        // 延续现有边界方案：外层在两个轴各 pad 3，der_weno5 内部再 pad 3。
+        Eigen::MatrixXd data_ext = pad_edge(pad_edge(phi, 3, 0), 3, 1);
+        Eigen::MatrixXd Vn_ext   = pad_edge(pad_edge(Vn,  3, 0), 3, 1);
 
-        // der_weno5 内部 pad 3 → 输出 (N+6, N+6)
+        // der_weno5 内部再 pad 3，输出尺寸仍与 data_ext 相同。
         Eigen::MatrixXd phi_x_minus = der_weno5(data_ext, dx, "minus", 1);
         Eigen::MatrixXd phi_x_plus  = der_weno5(data_ext, dx, "plus",  1);
 
@@ -160,19 +163,55 @@ namespace litho {
         Eigen::MatrixXd phi_y_minus = phi_y_minus_T.transpose();
         Eigen::MatrixXd phi_y_plus  = phi_y_plus_T.transpose();
 
-        Eigen::MatrixXd phi_x = _select_upwind_deriv(Vn_ext, phi_x_minus, phi_x_plus);
-        Eigen::MatrixXd phi_y = _select_upwind_deriv(Vn_ext, phi_y_minus, phi_y_plus);
+        // WENO 负责给出四个高阶单边导数；Godunov 数值 Hamiltonian 再根据
+        // 法向速度和各导数自身的符号组合它们。Vn 是标量法向速度，不能直接
+        // 当作 x/y 方向速度，因而不能用 Vn 的符号统一选择 minus 或 plus。
+        const int rows_ext = static_cast<int>(Vn_ext.rows());
+        const int cols_ext = static_cast<int>(Vn_ext.cols());
+        Eigen::MatrixXd grad_mag = Eigen::MatrixXd::Zero(rows_ext, cols_ext);
 
-        Eigen::MatrixXd grad_mag = (phi_x.array().square() + phi_y.array().square()).sqrt();
+        for (int i = 0; i < rows_ext; ++i){
+            for (int j = 0; j < cols_ext; ++j){
+                const double speed = Vn_ext(i, j);
+                const double dx_minus = phi_x_minus(i, j);
+                const double dx_plus  = phi_x_plus(i, j);
+                const double dy_minus = phi_y_minus(i, j);
+                const double dy_plus  = phi_y_plus(i, j);
+
+                double gx_sq = 0.0;
+                double gy_sq = 0.0;
+                if (speed > 0.0){
+                    const double dxm_pos = std::max(dx_minus, 0.0);
+                    const double dxp_neg = std::min(dx_plus, 0.0);
+                    const double dym_pos = std::max(dy_minus, 0.0);
+                    const double dyp_neg = std::min(dy_plus, 0.0);
+                    gx_sq = dxm_pos * dxm_pos + dxp_neg * dxp_neg;
+                    gy_sq = dym_pos * dym_pos + dyp_neg * dyp_neg;
+                }else if (speed < 0.0){
+                    const double dxm_neg = std::min(dx_minus, 0.0);
+                    const double dxp_pos = std::max(dx_plus, 0.0);
+                    const double dym_neg = std::min(dy_minus, 0.0);
+                    const double dyp_pos = std::max(dy_plus, 0.0);
+                    gx_sq = dxm_neg * dxm_neg + dxp_pos * dxp_pos;
+                    gy_sq = dym_neg * dym_neg + dyp_pos * dyp_pos;
+                }
+
+                grad_mag(i, j) = std::sqrt(gx_sq + gy_sq);
+            }
+        }
+
         Eigen::MatrixXd delta_ext = Vn_ext.array() * grad_mag.array();
 
-        Eigen::MatrixXd H1_abs_ext = (Vn_ext.array() * phi_x.array()).abs();
-        Eigen::MatrixXd H2_abs_ext = (Vn_ext.array() * phi_y.array()).abs();
+        // 对 H = Vn * |grad(phi)|，两个坐标方向的特征速度绝对值都不超过
+        // |Vn|。用它作为 CFL 上界虽然略保守，但不会依赖某一套单边导数。
+        Eigen::MatrixXd H1_abs_ext = Vn_ext.cwiseAbs();
+        Eigen::MatrixXd H2_abs_ext = Vn_ext.cwiseAbs();
 
-        int N = phi.rows();
-        Eigen::MatrixXd delta  = delta_ext.block(3, 3, N, N);
-        Eigen::MatrixXd H1_abs = H1_abs_ext.block(3, 3, N, N);
-        Eigen::MatrixXd H2_abs = H2_abs_ext.block(3, 3, N, N);
+        const int rows = static_cast<int>(phi.rows());
+        const int cols = static_cast<int>(phi.cols());
+        Eigen::MatrixXd delta  = delta_ext.block(3, 3, rows, cols);
+        Eigen::MatrixXd H1_abs = H1_abs_ext.block(3, 3, rows, cols);
+        Eigen::MatrixXd H2_abs = H2_abs_ext.block(3, 3, rows, cols);
 
         return Evolve_Params(delta, H1_abs, H2_abs);
     }

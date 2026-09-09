@@ -9,6 +9,63 @@
 #include <stdexcept>
 #include <string>
 
+namespace {
+
+// 使用单引号保护传给 shell 的路径，兼容路径中包含空格或单引号的情况。
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (const char character : value) {
+        if (character == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += character;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+// 独立宽度 CMA-ES 完成后，将历史 CSV 绘制为候选损失和最优损失曲线。
+void generate_cma_es_loss_curve(
+    const std::filesystem::path& project_root,
+    const std::filesystem::path& output_dir) {
+    namespace fs = std::filesystem;
+    const fs::path absolute_root = fs::absolute(project_root).lexically_normal();
+    const fs::path script_path =
+        absolute_root / "scripts/plot_cma_es_loss.py";
+    const fs::path history_path =
+        fs::absolute(output_dir / "independent_width_history.csv")
+            .lexically_normal();
+    const fs::path figure_path =
+        fs::absolute(output_dir / "cma_es_loss_curve.png").lexically_normal();
+    const fs::path venv_python = absolute_root / ".venv/bin/python";
+    const std::string python =
+        fs::is_regular_file(venv_python) ? venv_python.string() : "python3";
+
+    if (!fs::is_regular_file(history_path)) {
+        std::cerr << "Warning: CMA-ES history does not exist; loss curve was "
+                  << "not generated: " << history_path << '\n';
+        return;
+    }
+    if (!fs::is_regular_file(script_path)) {
+        std::cerr << "Warning: loss-curve script does not exist: "
+                  << script_path << '\n';
+        return;
+    }
+
+    const std::string command =
+        shell_quote(python) + " " + shell_quote(script_path.string()) +
+        " --input " + shell_quote(history_path.string()) +
+        " --output " + shell_quote(figure_path.string());
+    const int status = std::system(command.c_str());
+    if (status != 0) {
+        std::cerr << "Warning: failed to generate CMA-ES loss curve; command "
+                  << "exit status=" << status << '\n';
+    }
+}
+
+}  // namespace
+
 int main() {
     namespace fs = std::filesystem;
     using namespace litho;
@@ -107,6 +164,9 @@ int main() {
         SRAF_Optimizer optimizer(simulator, prepare.cache(), sraf_config);
         std::cout << "\nTesting initial-mask PV Band...\n";
         optimizer.optimize();
+        if (sraf_config.independent_sraf_widths) {
+            generate_cma_es_loss_curve(project_root, output_dir);
+        }
         std::cout << "\nSRAF optimizer initialization completed\n"
                   << "  components       : "
                   << optimizer.geometry_result().centerlines.size() << '\n'
@@ -122,6 +182,11 @@ int main() {
                   << (sraf_config.independent_sraf_widths
                           ? output_dir / "optimized_independent_mask.png"
                           : output_dir / "optimized_shared_mask.png")
+                  << '\n'
+                  << "  loss curve       : "
+                  << (sraf_config.independent_sraf_widths
+                          ? output_dir / "cma_es_loss_curve.png"
+                          : fs::path("not generated in shared-width mode"))
                   << '\n'
                   << "  output directory : " << output_dir << '\n';
         return EXIT_SUCCESS;

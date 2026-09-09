@@ -19,8 +19,6 @@ namespace litho {
 
         static Eigen::MatrixXd pad_edge(const Eigen::MatrixXd& data, int pad, int axis);
 
-        static Eigen::MatrixXd _select_upwind_deriv(const Eigen::MatrixXd& Vn, const Eigen::MatrixXd& der_minus, const Eigen::MatrixXd& der_plus);
-
         static Evolve_Params evolve_normal_WENO_godunov(const Eigen::MatrixXd& phi, const Eigen::MatrixXd& Vn, double dy, double dx);
 
         static Eigen::MatrixXd evolve_kappa(const Eigen::MatrixXd& phi, double dx, double dy, double b);

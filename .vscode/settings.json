@@ -1,5 +1,7 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:system",
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build-release/compile_commands.json"
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build-release/compile_commands.json",
+    "C_Cpp.default.compilerPath": "/usr/bin/clang++",
+    "C_Cpp.default.cppStandard": "c++20"
 }

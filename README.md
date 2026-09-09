@@ -123,5 +123,5 @@ Litho_cpp/
 ├── CMakeLists.txt             # CMake 构建配置
 ├── litho_viewer.py            # Python 可视化脚本
 ├── litho_viewer_build.md      # 可视化工具打包与使用说明
-└── README.md                  # 本文件
-```
+└── README.md                  # 本文件&#x20;best eval  105 | cost=0.846440
+协方差矩阵自适应调整的进化策略 CMA-ES

@@ -358,7 +358,7 @@ namespace litho {
             result.push_back(_ipoints_to_contour(_sample_elements(_cv_to_ipoints(c), k, "skip")));
         }
         // 对称性检查以及对称性处理
-        if (symmetry.empty() || result.size() < 2){
+        if (symmetry=="none" || result.size() < 2){
             return result;
         }
         int h = mask.rows(), w = mask.cols(), cy = h/2, cx = w/2;
@@ -368,6 +368,7 @@ namespace litho {
             if      (symmetry=="center")     { sym(i,0)=2*cy-y; sym(i,1)=2*cx-x; }
             else if (symmetry=="left-right") { sym(i,0)=y;      sym(i,1)=2*cx-x; }
             else if (symmetry=="diagonal")   { sym(i,0)=h-1-x;  sym(i,1)=w-1-y;  }
+            else if (symmetry=="none") {break;}
             else throw std::invalid_argument("Unsupported symmetry: " + symmetry);
         }
         result[1] = sym;

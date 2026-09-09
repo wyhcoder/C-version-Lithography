@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/wangyuhang/Desktop/school/Litho_cpp/test'
+relocations:     []
+...
