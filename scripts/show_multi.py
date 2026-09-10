@@ -20,20 +20,25 @@ import matplotlib.pyplot as plt
 
 def main():
     args = sys.argv[1:]
-    # 解析 --title_prefix
+    # 解析统一标题前缀和每幅图的独立标题。
     title_prefix = ""
+    titles = []
     positional = []
     i = 0
     while i < len(args):
         if args[i] == "--title_prefix" and i + 1 < len(args):
             title_prefix = args[i+1] + " "
             i += 2
+        elif args[i] == "--titles" and i + 1 < len(args):
+            titles = args[i+1].split("|")
+            i += 2
         else:
             positional.append(args[i])
             i += 1
 
     if len(positional) < 2:
-        print("用法: show_multi.py <file1> <cmap1> [<file2> <cmap2> ...] [--title_prefix 'iter N']")
+        print("用法: show_multi.py <file1> <cmap1> [<file2> <cmap2> ...] "
+              "[--titles 'title1|title2'] [--title_prefix 'iter N']")
         return
 
     # positional 是 file/cmap 交替对
@@ -47,6 +52,9 @@ def main():
         pairs.append((fname, cmap))
 
     n = len(pairs)
+    if titles and len(titles) != n:
+        raise ValueError(
+            f"--titles 给出了 {len(titles)} 个标题，但输入了 {n} 幅图")
     cols = min(n, 3)
     rows = (n + cols - 1) // cols
 
@@ -55,7 +63,8 @@ def main():
 
     for idx, (fname, cmap) in enumerate(pairs):
         arr = np.loadtxt(fname, comments="#")
-        title = title_prefix + Path(fname).stem
+        image_title = titles[idx] if titles else Path(fname).stem
+        title = title_prefix + image_title
         im = axes[idx].imshow(arr, cmap=cmap, interpolation="nearest")
         axes[idx].set_title(f"{title}\nmin={arr.min():.4f} max={arr.max():.4f}")
         axes[idx].axis("off")

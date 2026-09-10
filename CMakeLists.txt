@@ -260,6 +260,10 @@ if(BUILD_TESTING)
     target_link_libraries(test_parametric litho_core)
     add_test(NAME parametric_b_spline COMMAND test_parametric)
 
+    add_executable(test_dirac_rasterization tests/test_dirac_rasterization.cpp)
+    target_link_libraries(test_dirac_rasterization litho_core)
+    add_test(NAME dirac_rasterization COMMAND test_dirac_rasterization)
+
     add_executable(test_level_set_godunov tests/test_level_set_godunov.cpp)
     target_link_libraries(test_level_set_godunov litho_core)
     add_test(NAME level_set_godunov COMMAND test_level_set_godunov)

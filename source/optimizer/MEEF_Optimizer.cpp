@@ -95,7 +95,8 @@ namespace litho {
         _render_initial_mask.resize(N, N);
 
         ParametricDemo parametric_sraf(
-            config.curve_type, _target_mask, config.msaa_level);
+            config.curve_type, _target_mask, config.msaa_level,
+            config.rasterizer);
         // fitted_txt 已经是拟合结果，直接固定使用，避免从轮廓再次拟合造成漂移。
         _render_sraf_mask = (_config.sraf_mask_mode == "fitted_txt")
             ? _main_sraf.sraf_mask
@@ -545,7 +546,8 @@ namespace litho {
         }
 
         ParametricDemo parametric(
-            _config.curve_type, _target_mask, _config.msaa_level);
+            _config.curve_type, _target_mask, _config.msaa_level,
+            _config.rasterizer);
         Polygons curves = parametric.get_curve_points(cps, 200);
         f << std::fixed << std::setprecision(6);
         f << "# Parametric curves at iteration " << iteration_idx << '\n';
@@ -781,11 +783,14 @@ namespace litho {
             // 线程私有资源：每个线程独占一个 Imaging 和一个曲线渲染器。
             // imaging_workers 本身是共享容器，但不同线程访问不同元素。
             Imaging& imaging = *imaging_workers[thread_id];
-            ParametricDemo parametric(_config.curve_type, _target_mask, _config.msaa_level);
+            ParametricDemo parametric(
+                _config.curve_type, _target_mask, _config.msaa_level,
+                _config.rasterizer);
 
             // 动态调度：线程每次领取 1 个扰动任务；先完成的线程继续领取任务，
             // 可降低不同曲线渲染/成像耗时造成的线程等待。
             #pragma omp for schedule(dynamic, 1)
+            // #pragma omp for schedule(static)
             for (int task_idx = 0; task_idx < task_count; ++task_idx) {
                 // 某个线程失败后，其余线程跳过尚未开始的任务。
                 if (task_failed.load(std::memory_order_relaxed)) continue;
@@ -1085,7 +1090,8 @@ namespace litho {
 
         Imaging imaging(_cache);
         ParametricDemo parametric(
-            _config.curve_type, _target_mask, _config.msaa_level);
+            _config.curve_type, _target_mask, _config.msaa_level,
+            _config.rasterizer);
 
         // 保存一次掩模评估产生的图像和误差指标。
         struct EvaluatedState {

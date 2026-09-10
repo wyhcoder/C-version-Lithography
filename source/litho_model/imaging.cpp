@@ -65,7 +65,7 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
     const auto& kernels_frequency = _cache.H_k_frequence;
     const auto& socs_values = _cache.socs_vals;
     const int kernel_count = static_cast<int>(kernels_frequency.size());
-
+    // 防御性代码
     if (mask.rows() != N || mask.cols() != N) {
         throw std::invalid_argument("Imaging: mask dimensions must match cache.N");
     }
@@ -135,8 +135,7 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
 #pragma omp for schedule(static)
 #endif
         for (int k = 0; k < kernel_count; ++k) {
-            local_temp =
-                _mask_frequency.array() * kernels_frequency[k].array();
+            local_temp = _mask_frequency.array() * kernels_frequency[k].array();
 
             FFT::to_fftw(local_temp, local_in);
             fftw_execute_dft(_plan_inv, local_in, local_out);
@@ -146,11 +145,11 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
             electric_field.resize(N, N);
             FFT::from_fftw(local_out, electric_field);
             electric_field *= inverse_element_count;
-            FFT::fftshift_inplace(electric_field);
+            FFT::fftshift_inplace(electric_field); // 脚点搬到中心去
         }
 
-        fftw_free(local_in);
-        fftw_free(local_out);
+        fftw_free(local_in); // 并行结束后销毁内存
+        fftw_free(local_out); // 并行结束后销毁内存
     }
 
     // 固定按 k 顺序累加，保证单线程和多线程采用相同的浮点求和顺序。

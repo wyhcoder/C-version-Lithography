@@ -1,0 +1,12 @@
+{
+  "schema": "pdf_read_preflight/1",
+  "verdict": "PASS",
+  "file": "/Users/wangyuhang/Desktop/school/文献/JOLT-D-26-04401_R1_reviewer.pdf",
+  "sha256": "f29be328511f874b073d8a10de5f4522f875a551a07ecd560c0c3cbc764b58bc",
+  "declared_page_count": 92,
+  "enumerated_page_count": 92,
+  "reader_page_count": 92,
+  "warnings": [],
+  "generated_at": "2026-09-10T06:39:10.326153+00:00",
+  "tool": "pdf_read_preflight/1.0.0"
+}

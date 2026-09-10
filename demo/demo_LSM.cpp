@@ -66,7 +66,8 @@ int main(int argc, char** argv){
     const fs::path ctm_binary_mask =
         result_root / "CTM_result/binary_mask.txt";
     SaveTxt::load_txt(ctm_binary_mask.string(), binary_mask);
-    LSM_Optimizer lsm_optimizer(simulator, cache, 4.0, 4.0, 0.5, 0.01, 100);
+    //(LithographySimulator& simulator, ImagingCache& cache, double dx, double dy, double cfl, double b, int iter);
+    LSM_Optimizer lsm_optimizer(simulator, cache, params.system.pixel_size_nm , params.system.pixel_size_nm, 0.9, 0.01, 100);
     // 启用非主图形区域显影惩罚（penalty=10, threshold=0.01）
     lsm_optimizer.set_penalty(0.0, 0.0);
     auto t_begin = std::chrono::high_resolution_clock::now();

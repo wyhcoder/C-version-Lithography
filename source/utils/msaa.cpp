@@ -1,11 +1,136 @@
 #include "msaa.h"
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
 namespace litho {
+
+namespace {
+
+double tent_kernel(double r) {
+    const double value = 1.0 - std::abs(r);
+    return value > 0.0 ? value : 0.0;
+}
+
+// 对单条闭合轮廓复现论文公式 (6)-(8)。输入坐标顺序为 (y,x)。
+Eigen::MatrixXd rasterize_one_dirac_indicator(
+    const Polygon& polygon,
+    int height,
+    int width,
+    double h,
+    double segment_fraction)
+{
+    const int point_count = static_cast<int>(polygon.rows());
+    if (point_count < 3) {
+        return Eigen::MatrixXd::Zero(height, width);
+    }
+    if (polygon.cols() < 2 || !polygon.allFinite()) {
+        throw std::invalid_argument(
+            "rasterize_dirac_indicator: polygon must be a finite Nx2 matrix");
+    }
+
+    const double min_y = polygon.col(0).minCoeff();
+    const double max_y = polygon.col(0).maxCoeff();
+    const double min_x = polygon.col(1).minCoeff();
+    const double max_x = polygon.col(1).maxCoeff();
+    const double max_domain_y = static_cast<double>(height - 1) * h;
+    const double max_domain_x = static_cast<double>(width - 1) * h;
+    if (min_x <= 0.0 || min_y <= 0.0 ||
+        max_x >= max_domain_x || max_y >= max_domain_y) {
+        throw std::invalid_argument(
+            "rasterize_dirac_indicator: contour must lie strictly inside the domain");
+    }
+
+    // 用标准 (x,y) 有向面积判定方向；首尾无需显式重复，最后一条边自动闭合。
+    double twice_signed_area = 0.0;
+    for (int i = 0; i < point_count; ++i) {
+        const int next = (i + 1) % point_count;
+        const double x0 = polygon(i, 1);
+        const double y0 = polygon(i, 0);
+        const double x1 = polygon(next, 1);
+        const double y1 = polygon(next, 0);
+        twice_signed_area += x0 * y1 - x1 * y0;
+    }
+    if (std::abs(twice_signed_area) < 1e-12) {
+        throw std::invalid_argument(
+            "rasterize_dirac_indicator: contour area is zero");
+    }
+    const bool counter_clockwise = twice_signed_area > 0.0;
+
+    Eigen::MatrixXd gx = Eigen::MatrixXd::Zero(height, width);
+    Eigen::MatrixXd gy = Eigen::MatrixXd::Zero(height, width);
+    const double target_segment_length = segment_fraction * h;
+
+    for (int edge = 0; edge < point_count; ++edge) {
+        const int next = (edge + 1) % point_count;
+        const double x0 = polygon(edge, 1);
+        const double y0 = polygon(edge, 0);
+        const double dx = polygon(next, 1) - x0;
+        const double dy = polygon(next, 0) - y0;
+        const double edge_length = std::hypot(dx, dy);
+        if (edge_length <= 1e-14) continue;
+
+        const int segment_count = std::max(
+            1, static_cast<int>(std::ceil(edge_length / target_segment_length)));
+        const double segment_length = edge_length / segment_count;
+        const double tangent_x = dx / edge_length;
+        const double tangent_y = dy / edge_length;
+
+        // 逆时针轮廓内部在切线左侧，因此外法向为 (ty,-tx)。
+        const double normal_x = counter_clockwise ? tangent_y : -tangent_y;
+        const double normal_y = counter_clockwise ? -tangent_x : tangent_x;
+        const double scale = -segment_length / (h * h);
+
+        for (int segment = 0; segment < segment_count; ++segment) {
+            const double fraction =
+                (static_cast<double>(segment) + 0.5) / segment_count;
+            const double sample_x = x0 + fraction * dx;
+            const double sample_y = y0 + fraction * dy;
+            const double ux = sample_x / h;
+            const double uy = sample_y / h;
+            const int ix0 = static_cast<int>(std::floor(ux));
+            const int iy0 = static_cast<int>(std::floor(uy));
+
+            // d(r)=1-|r| 的支撑为 [-1,1]，每个边界点最多影响四个网格点。
+            for (int row : {iy0, iy0 + 1}) {
+                if (row < 0 || row >= height) continue;
+                const double wy = tent_kernel(uy - row);
+                if (wy == 0.0) continue;
+                for (int col : {ix0, ix0 + 1}) {
+                    if (col < 0 || col >= width) continue;
+                    const double weight = tent_kernel(ux - col) * wy;
+                    gx(row, col) += scale * normal_x * weight;
+                    gy(row, col) += scale * normal_y * weight;
+                }
+            }
+        }
+    }
+
+    // x/y 累积方向的起始边界均令 chi=0。分别积分 Gx/Gy 后取平均。
+    Eigen::MatrixXd chi_x = Eigen::MatrixXd::Zero(height, width);
+    Eigen::MatrixXd chi_y = Eigen::MatrixXd::Zero(height, width);
+    for (int row = 0; row < height; ++row) {
+        double accumulated = 0.0;
+        for (int col = 0; col < width; ++col) {
+            accumulated += h * gx(row, col);
+            chi_x(row, col) = accumulated;
+        }
+    }
+    for (int col = 0; col < width; ++col) {
+        double accumulated = 0.0;
+        for (int row = 0; row < height; ++row) {
+            accumulated += h * gy(row, col);
+            chi_y(row, col) = accumulated;
+        }
+    }
+
+    return (0.5 * (chi_x + chi_y)).cwiseMin(1.0).cwiseMax(0.0);
+}
+
+}  // namespace
 
 // ── 采样点预设 ─────────────────────────────────────────────────────────────
 Eigen::MatrixXd AntiAliasRenderer::_make_offsets_4x() {
@@ -242,6 +367,59 @@ Eigen::MatrixXd AntiAliasRenderer::MSAA(
         }
         return final_cov;
     }
+}
+
+Eigen::MatrixXd AntiAliasRenderer::rasterize_dirac_indicator(
+    const Polygons& polygons,
+    const Eigen::MatrixXd& mask_template,
+    const std::string& type,
+    double grid_spacing,
+    double segment_fraction) const
+{
+    if (mask_template.rows() < 3 || mask_template.cols() < 3) {
+        throw std::invalid_argument(
+            "rasterize_dirac_indicator: mask template must be at least 3x3");
+    }
+    if (!std::isfinite(grid_spacing) || grid_spacing <= 0.0) {
+        throw std::invalid_argument(
+            "rasterize_dirac_indicator: grid_spacing must be positive");
+    }
+    if (!std::isfinite(segment_fraction) || segment_fraction <= 0.0) {
+        throw std::invalid_argument(
+            "rasterize_dirac_indicator: segment_fraction must be positive");
+    }
+    if (type != "gray" && type != "binary") {
+        throw std::invalid_argument(
+            "rasterize_dirac_indicator: type must be gray or binary");
+    }
+
+    const int height = static_cast<int>(mask_template.rows());
+    const int width = static_cast<int>(mask_template.cols());
+
+    if (type == "binary") {
+        // 与现有 MSAA binary 语义一致：每条轮廓先重构，再按奇偶规则合并。
+        Eigen::MatrixXi parity = Eigen::MatrixXi::Zero(height, width);
+        for (const auto& polygon : polygons) {
+            const Eigen::MatrixXd indicator = rasterize_one_dirac_indicator(
+                polygon, height, width, grid_spacing, segment_fraction);
+            for (int row = 0; row < height; ++row) {
+                for (int col = 0; col < width; ++col) {
+                    if (indicator(row, col) >= 0.5) parity(row, col) ^= 1;
+                }
+            }
+        }
+        return parity.cast<double>();
+    }
+
+    Eigen::MatrixXd combined = Eigen::MatrixXd::Zero(height, width);
+
+    for (const auto& polygon : polygons) {
+        Eigen::MatrixXd indicator = rasterize_one_dirac_indicator(
+            polygon, height, width, grid_spacing, segment_fraction);
+        combined = combined.array().max(indicator.array()).matrix();
+    }
+    combined = combined.cwiseMin(1.0).cwiseMax(0.0);
+    return combined;
 }
 
 }  // namespace litho

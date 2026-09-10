@@ -36,9 +36,9 @@ namespace litho {
           const Eigen::MatrixXd& gray_mask,
           const Eigen::MatrixXd& target_pattern,
           double peak_min_intensity = 0.1,
-          double quantile_val       = 0.35,
-          int    area_threshold     = 100,
-          int    min_spacing_pixels = 20);
+          double quantile_val       = 0.25,
+          int    area_threshold     = 50,
+          int    min_spacing_pixels = 15);
     };
 
 }

@@ -1,0 +1,93 @@
+<div id="cfl-grid-intuition">
+  <h2>一个时间步里，信息从哪里来？</h2>
+  <div class="viz-controls">
+    <label class="form-label" for="cfl-grid-slider">
+      Courant 数 C = <span id="cfl-grid-value" class="tabular-nums">0.50</span>
+      <span class="text-muted">（一次传播的网格数）</span>
+    </label>
+    <input class="form-range" id="cfl-grid-slider" type="range" min="0" max="3" step="0.05" value="0.5">
+  </div>
+  <svg id="cfl-grid-svg" viewBox="0 0 720 245" role="img" aria-labelledby="cfl-grid-title cfl-grid-desc">
+    <title id="cfl-grid-title">CFL 条件的一维网格示意</title>
+    <desc id="cfl-grid-desc">目标网格点只能使用当前点和左邻点。滑块改变一个时间步内的传播距离，展示真实来源是否仍在数值格式读取的邻域内。</desc>
+    <rect x="390" y="72" width="120" height="82" rx="0" fill="var(--viz-series-1)" opacity="0.12"></rect>
+    <text x="450" y="61" text-anchor="middle" fill="var(--foreground)">数值格式读取范围</text>
+    <line x1="90" y1="120" x2="630" y2="120" stroke="var(--border)" stroke-width="2"></line>
+    <g id="cfl-grid-points"></g>
+    <line id="cfl-grid-arrow" x1="450" y1="190" x2="510" y2="190" stroke="var(--viz-series-1)" stroke-width="4"></line>
+    <polygon id="cfl-grid-arrowhead" points="510,190 498,183 498,197" fill="var(--viz-series-1)"></polygon>
+    <circle id="cfl-grid-source" cx="450" cy="120" r="8" fill="var(--viz-series-2)"></circle>
+    <text id="cfl-grid-source-label" x="450" y="98" text-anchor="middle" fill="var(--foreground)">真实来源</text>
+    <text x="510" y="219" text-anchor="middle" fill="var(--foreground)">要计算的新点 i</text>
+  </svg>
+  <div id="cfl-grid-status" class="card" aria-live="polite"></div>
+</div>
+
+<style>
+  #cfl-grid-intuition { width: 100%; }
+  #cfl-grid-intuition .viz-controls { align-items: end; }
+  #cfl-grid-intuition .form-label { flex: 0 0 auto; }
+  #cfl-grid-intuition .form-range { flex: 1 1 260px; }
+  #cfl-grid-intuition svg { display: block; width: 100%; height: auto; }
+  #cfl-grid-intuition svg text { font-size: 13px; }
+  #cfl-grid-intuition #cfl-grid-status { margin-top: 8px; }
+</style>
+
+<script>
+(() => {
+  const root = document.getElementById('cfl-grid-intuition');
+  const slider = root.querySelector('#cfl-grid-slider');
+  const value = root.querySelector('#cfl-grid-value');
+  const points = root.querySelector('#cfl-grid-points');
+  const source = root.querySelector('#cfl-grid-source');
+  const sourceLabel = root.querySelector('#cfl-grid-source-label');
+  const arrow = root.querySelector('#cfl-grid-arrow');
+  const arrowhead = root.querySelector('#cfl-grid-arrowhead');
+  const status = root.querySelector('#cfl-grid-status');
+  const targetX = 510;
+  const cell = 120;
+
+  for (let index = -3; index <= 1; index += 1) {
+    const x = targetX + index * cell;
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', x);
+    circle.setAttribute('cy', '120');
+    circle.setAttribute('r', '6');
+    circle.setAttribute('fill', 'var(--foreground)');
+    points.appendChild(circle);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', x);
+    label.setAttribute('y', '145');
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('fill', 'var(--foreground)');
+    label.textContent = index === 0 ? 'i' : `i${index > 0 ? '+' : ''}${index}`;
+    points.appendChild(label);
+  }
+
+  function update() {
+    const c = Number(slider.value);
+    const sourceX = targetX - c * cell;
+    const safe = c <= 1;
+    value.textContent = c.toFixed(2);
+    source.setAttribute('cx', sourceX);
+    source.setAttribute('fill', safe ? 'var(--viz-series-2)' : 'var(--destructive)');
+    sourceLabel.setAttribute('x', sourceX);
+    sourceLabel.setAttribute('fill', safe ? 'var(--foreground)' : 'var(--destructive)');
+    arrow.setAttribute('x1', sourceX);
+    arrow.setAttribute('x2', targetX - 9);
+    arrow.setAttribute('stroke', safe ? 'var(--viz-series-1)' : 'var(--destructive)');
+    arrowhead.setAttribute('points', `${targetX},190 ${targetX - 12},183 ${targetX - 12},197`);
+    arrowhead.setAttribute('fill', safe ? 'var(--viz-series-1)' : 'var(--destructive)');
+
+    if (safe) {
+      status.textContent = `C = ${c.toFixed(2)}：真实来源位于 i-1 与 i 之间，数值格式读得到它附近的信息。`;
+    } else {
+      status.textContent = `C = ${c.toFixed(2)}：真实来源越过了 i-1，但这个简单格式仍只读取 i-1 和 i，因此跟不上。`;
+    }
+  }
+
+  slider.addEventListener('input', update);
+  update();
+})();
+</script>

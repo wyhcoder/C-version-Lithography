@@ -48,16 +48,43 @@ Eigen::Vector2d periodic_b_spline_point(
 
 ParametricDemo::ParametricDemo(const std::string& curve_type,
                                const Eigen::MatrixXd& mask_template,
-                               int msaa_level)
+                               int msaa_level,
+                               const std::string& rasterizer)
     : _curve_type(curve_type),
+      _rasterizer(rasterizer),
       _mask_template(mask_template),
       _renderer(msaa_level)
-{}
+{
+    if (_rasterizer != "msaa" && _rasterizer != "dirac") {
+        throw std::invalid_argument(
+            "ParametricDemo: rasterizer must be msaa or dirac");
+    }
+}
 
 // ── render_curve ──────────────────────────────────────────────────────────
-Eigen::MatrixXd ParametricDemo::render_curve(const Polygons& cps) const {
-    Polygons pts = get_curve_points(cps, 200);
+Eigen::MatrixXd ParametricDemo::render_curve(const Polygons& cps,
+                                             int num_points) const {
+    Polygons pts = get_curve_points(cps, num_points);
+    if (_rasterizer == "dirac") {
+        return _renderer.rasterize_dirac_indicator(
+            pts, _mask_template, "gray", 1.0, 0.25);
+    }
     return _renderer.MSAA(pts, _mask_template, "gray");
+}
+
+Eigen::MatrixXd ParametricDemo::render_curve_dirac(
+    const Polygons& cps,
+    int num_points,
+    double grid_spacing,
+    double segment_fraction) const
+{
+    Polygons pts = get_curve_points(cps, num_points);
+    return _renderer.rasterize_dirac_indicator(
+        pts,
+        _mask_template,
+        "gray",
+        grid_spacing,
+        segment_fraction);
 }
 
 // ── get_curve_points ──────────────────────────────────────────────────────

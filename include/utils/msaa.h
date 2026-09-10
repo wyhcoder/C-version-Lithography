@@ -21,6 +21,22 @@ public:
                          const Eigen::MatrixXd& mask_template,
                          const std::string& type = "gray") const;
 
+    // 论文 JOLT-D-26-04401 第 2.2 节、公式 (6)-(8) 的指示函数重构：
+    // 1. 将边界细分到约 segment_fraction * grid_spacing；
+    // 2. 用紧支撑三角核把 -n*delta_Gamma 散布到网格；
+    // 3. 分别沿 x/y 积分，平均并裁剪到 [0,1]。
+    //
+    // polygons 与现有 MSAA 一样使用 (y,x) 坐标；当前工程的曲线坐标
+    // 以像素为单位，因此默认 grid_spacing=1.0。论文取 segment_fraction=0.25。
+    // 该方法要求每条闭合轮廓完整位于计算域内部，因为计算域边界的
+    // 指示函数初值被设为 0。
+    Eigen::MatrixXd rasterize_dirac_indicator(
+        const Polygons& polygons,
+        const Eigen::MatrixXd& mask_template,
+        const std::string& type = "gray",
+        double grid_spacing = 1.0,
+        double segment_fraction = 0.25) const;
+
     // 单多边形光栅化
     Eigen::MatrixXd rasterize_polygon(const Polygon& polygon,
                                       int height, int width,

@@ -28,10 +28,20 @@ public:
     // curve_type: "OA"（直接折线）| "BZ"（三次 Bezier）| "BS"（B样条）
     ParametricDemo(const std::string& curve_type,
                    const Eigen::MatrixXd& mask_template,
-                   int msaa_level = 16);
+                   int msaa_level = 16,
+                   const std::string& rasterizer = "msaa");
 
-    // 根据控制点生成 mask
-    Eigen::MatrixXd render_curve(const Polygons& cps) const;
+    // 根据控制点生成 mask。num_points 控制每条 B 样条轮廓的曲线采样数。
+    Eigen::MatrixXd render_curve(const Polygons& cps,
+                                 int num_points = 200) const;
+
+    // 使用与 render_curve 完全相同的控制点和曲线采样点，改用论文第 2.2 节
+    // 的 Dirac 指示函数方法进行光栅化，便于和原 MSAA 做一一对照。
+    Eigen::MatrixXd render_curve_dirac(
+        const Polygons& cps,
+        int num_points = 200,
+        double grid_spacing = 1.0,
+        double segment_fraction = 0.25) const;
 
     // 只返回曲线点（不光栅化）
     Polygons get_curve_points(const Polygons& cps, int num_points = 200) const;
@@ -56,6 +66,7 @@ public:
 
 private:
     std::string        _curve_type;
+    std::string        _rasterizer;
     Eigen::MatrixXd    _mask_template;
     AntiAliasRenderer  _renderer;
 };

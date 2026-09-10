@@ -1,0 +1,1748 @@
+                                     Optics and Laser Technology
+                Parametric curvilinear mask optimization with rigorous gradient
+                                                 --Manuscript Draft--
+
+Manuscript Number:                       JOLT-D-26-04401R1
+
+Article Type:                            Research Paper
+
+Section/Category:                        Optical information processing and systems
+
+Keywords:                                Lithography; Curvilinear mask; Parametric curve; Rigorous gradient; Gradient-based
+                                         optimization; Smooth target
+
+Abstract:                                A general framework is proposed for the parametric curvilinear mask optimization with
+                                         rigorous gradient. As an example of parametric curve, the piecewise cubic Bezier
+                                         curve is employed to represent the curvilinear contour of mask. By optimizing only the
+                                         normal displacements of online knots and reconstructing the offline knots, the number
+                                         of design variables is reduced while maintaining the smoothness of curve. Rigorous
+                                         gradient of the objective function is derived, in which continuum‐based formulations of
+                                         design velocity and indicator function provide important links between the variation of
+                                         design variable and the variation of mask transmittance. Gradient based optimization
+                                         with simple strategy of adaptive step size is implemented. In addition, the methods of
+                                         rasterization and target smoothing are presented. The proposed framework can be
+                                         employed for any parametric curvilinear mask and even for Manhattan-style mask.
+                                         Experiments with masks whose average critical dimension is 87 nm and area is 2.36
+                                         um demonstrate that the optimization can be completed around 2~seconds and the
+                                         average of maximum edge placement error is below 3 nm.
+
+
+
+
+                    Powered by Editorial Manager® and ProduXion Manager® from Aries Systems Corporation
+Cover letter
+
+
+
+
+               To Editor, Optics & Laser Technology
+
+                                                                                                       2026.6.8
+
+               Dear Optics & Laser Technology Editor,
+
+               We would like to submit our manuscript entitled "Parametric Curvilinear Mask
+               Optimization with Rigorous Gradient" for consideration for publication in your journal
+               Optics & Laser Technology.
+
+               Summary of the Work
+
+               This paper presents a novel and general framework for parametric curvilinear mask
+               optimization in optical lithography, with a key focus on deriving the rigorous gradient of the
+               objective function with respect to design variables — a significant technical challenge that has
+               not been adequately addressed in prior parametric-curve-based mask optimization research.
+
+               Key Contributions
+
+               1. Rigorous Gradient Derivation: We establish three essential links to obtain the rigorous
+               gradient: (a) the design velocity linking design variable variation to mask contour variation via
+               the analytical parametric curve; (b) the indicator function linking mask contour variation to
+               mask transmittance variation; and (c) the contour integration of the product between gradient
+               density and design velocity. This rigorous approach fundamentally improves upon existing
+               methods that rely on gradient-free optimization or approximate EPE-based gradients.
+
+               2. Efficient Design Variable Strategy: By optimizing only the normal displacements of online
+               knots and reconstructing offline knots, we halve the number of design variables while
+               maintaining curve smoothness, enabling efficient gradient-based optimization.
+
+               3. General Applicability: The proposed framework is not limited to Bézier curves — it can be
+               applied to any parametric curve representation (e.g., B-spline, NURBS) and can even
+               accommodate Manhattan-style masks.
+
+               4. Impressive Experimental Results: Using the ICCAD 2013 benchmark masks (scaled 1.25×,
+               average CD = 87 nm, area = 2.36 μm²):
+               - Each OPC completes in approximately 2 seconds
+               - Average maximum edge placement error (EPE) is below 3 nm
+               - The method significantly outperforms pixel-based methods in both pattern fidelity (avg. max
+               EPE 2.59 nm vs. 9.35 nm) and convergence behavior
+
+               Significance
+
+               As the semiconductor industry moves toward smaller nodes and curvilinear mask geometries
+become increasingly important, the ability to perform fast, accurate, and manufacturable mask
+optimization is critical. Our framework provides a mathematically rigorous approach that
+combines the geometric flexibility of parametric curves with the efficiency of gradient-based
+optimization. The results demonstrate strong potential for full-chip applications, with estimated
+throughput of 100 mm² wafer area per 24 hours using 1000 CPUs.
+
+We believe that this work represents a meaningful advancement in inverse lithography and
+optical proximity correction, and will be of great interest to researchers and engineers in the
+field of computational lithography.
+
+Additional Information
+
+- This manuscript has not been previously published and is not under consideration elsewhere.
+- All authors have approved the manuscript and agree with its submission.
+
+Thank you for considering our manuscript. We look forward to your positive response.
+
+Sincerely,
+
+Shiyuan Liu, PhD, Professor
+Director of Precision Instrument Research Center (PIRC)
+School of Mechanical Science and Engineering
+Huazhong University of Science and Technology
+1037 Luoyu Road, Wuhan, Hubei 430074, China
+Tel: +86 27 8755 9543
+Email: shyliu@hust.edu.cn
+Webpage: https://pirc.hust.edu.cn
+Response to reviewers
+
+
+
+
+                 Dear editor and reviewers,
+
+                 We thank the reviewers very much for the careful reading and insightful comments on
+                 our paper. The comments are very important and helpful. We carefully considered all
+                 the comments. The following summarizes how we responded to the comments, and
+                 the changes are highlighted in the revised paper.
+
+
+
+                 Best Regards,
+                 Qi Xia, Shiyuan Liu
+Response to the comments of Reviewer 1:
+
+ Comment:
+I believe that your manuscript provides a good overview of the prior and current
+options for OPC with curvilinear data and for OPC simulation. Your description and
+details of the method you implemented are clear and detailed. It is a good
+accomplishment to implement a new global optimization method for curvilinear
+pattern OPC.
+
+Response:
+     We thank the reviewer for the comments.
+
+
+ Comment:
+However, the pattern resolution and OPC accuracy portions of the results are not
+sufficient to be considered state of the art. 0.93NA 193nm dry scanners were used for
+the 45nm logic node with minimum feature sizes of about 65-70nm, considerably
+smaller than 87nm feature used for the results.
+
+Response:
+      We thank the reviewer for the insightful comments. The typical minimum feature
+size is about 65-70nm for 0.93NA 193nm dry scanners. In the revised manuscript, we
+deleted the remarks about the resolution in the discussion of the results.
+      However, to achieve such size, it may require integration of a suite of advanced
+technologies, not only the optical proximity correction (OPC) and off-Axis Illumination
+(OAI) employed in the present study, but also the sub-resolution assist feature (SRAF),
+phase-shifting mask (PSM), and source-mask optimization (SMO). Therefore, in the
+present study the minimum feature sizes is larger than 65–70 nm. In our future work,
+SRAF and SMO will be integrated with the proposed method to improve the resolution.
+
+
+ Comment:
+Also, the error section description should be more clearer about where on the patterns
+the largest errors are observed. Figure 8 should be redone (or another figure added)
+to show direct overlap comparisons between the rounded target pattern and the
+simulated wafer contour (ie, simulation of the OPC'd mask).
+
+Response:
+    In the revised manuscript, another figure (Fig. 9) is added to show the comparison
+between the smooth targets and the simulated wafer contours. In the figure, star-
+shaped markers are used to indicate the evaluation points where the maximum of the
+absolute value of EPE arise.
+
+
+
+
+ Comment:
+
+Additionally, the term used in the manuscript “transferred pattern” is vague and
+should be made clearer. I believe that you are referring to the simulation of the wafer
+contour after OPC but readers will not be certain without a more description.
+
+Response:
+    It is true that “transferred pattern” in the manuscript refers to the simulation of
+the wafer contour. To avoid readers’ misunderstanding, “transferred pattern” is
+changed to “simulated wafer contour”.
+
+
+
+ Comment:
+
+I believe the max errors listed (average of 2.59nm) could be reasonable or but are more
+likely unreasonably large depending upon where on the patterns they occur. That is
+why direct overlap of simulated wafer contours and rounded target is important. In
+general a max error of 3% (=2.59/87) would be considered too large for production
+OPC, especially a global solution which will be more time intensive. Because (as
+mentioned above) a more reasonable min feature CD would be about 65-70nm, a
+2.59nm error should probably be considered nearly a 4% error which is definitely too
+large. I suggest that you should debug your global solver results further and describe
+where these larger errors are coming from (so that you can mention that in future
+work they will be reduced).
+
+Response:
+    We thank the reviewer for the insightful comment. As can been seen in Fig. 9
+added to the revised manuscript, the maximums of the absolute value of EPE arise
+near corners. More specifically, on the round corners of the smoothed targets.
+     In addition, the entire OPC procedure is carefully debugged and two
+improvements are added to the revised manuscript. Accordingly, all the optimizations
+are redone.
+     The first improvement is about the computation of resist image. A paragraph is
+added to the end of Section 3.2 as following:
+“It is worthy to note that applying Eq. (19) to compute the resist image produces high frequency
+components that do not exist in the aerial image. In such circumstance, if the pixel size is not
+adequately reduced, aliasing occurs, which results in distortion of simulated wafer contour and
+directly contributes to errors in EPE. Therefore, the aerial image obtained by Eq. (18) is first up-
+sampled to a fine grid by using the FFT based interpolation, then the resist image is computed via
+Eq. (19). With the high resolution resist image, the pattern contour on wafer and EPEs are obtained.
+In addition, the high resolution resist image is down-sampled to the same grid of aerial image by
+using the FFT based interpolation, and the result is used to compute the pattern error and rigorous
+gradient, which will be described in the next section.”
+    The second improvement is about the target resist image Z0. A paragraph is
+added to the end of Section 4.4 as following:
+“After the smoothed target having being obtained, the target pattern Z0 is computed by using the
+signed distance function Φ of the contour of smoothed target, and it is given by
+                                                    1
+                              Z0 (𝐪) =                                                         (35)
+                                                  Φ(𝐪)      t
+                                         1 + exp ( σ − ln 1 −r t )
+                                                                r
+
+where 𝜎 is a parameter that controls the steepness of Z0 around Γ; tr is the threshold parameter
+in Eq. (19). It can be readily verified that Eq. (35) ensures the value of Z0 equal to tr on Γ.
+The signed distance function Φ is computed by
+                                     Φ(𝐪) = sign(𝐪) ⋅ dist(𝐪, Γ)                                (36)
+where 𝑠𝑖𝑔𝑛(𝒒) is the sign function; 𝑑𝑖𝑠𝑡(𝒒, 𝛤) is the minimal Euclidean distance between point
+𝒒 and the contour Γ. The distance is computed by using the fast sweeping method [40]. The sign
+function can be readily obtained by using the indicator function χ in Eq. (4) as
+                                     sign(𝐪) = −2χ(𝐪) + 1                                (37)
+The minus sign in Eq. (37) ensures the gradient vector of the sign function pointing outwards to the
+boundary. The indicator function 𝜒(𝒒) and the distance function 𝑑𝑖𝑠𝑡(𝒒, 𝛤) are computed on a
+grid refined by 16 times, then Z0 is obtained via Eq. (35), finally it is down-sampled via the FFT-
+based interpolation.”
+      In addition, the number of optimization iterations is increased from 20 to 30, and
+the initial time step is increased from 1.2 to 1.4. Because of these improvements, the
+average max EPE is reduced to 1.98nm, i.e., 2.3% of 87nm. In future work the errors
+will be further reduced.
+
+
+
+ Comment:
+
+Finally, the word “firstly” on page 5 and page 17 should be changed to “first”. While
+grammatically correct, first is considered somewhat old fashioned.
+
+Response:
+     All the word “firstly” are changed to “first”.
+Response to the comments of Reviewer 2:
+
+ Comment:
+Overall optimization method and descriptions is good. Great work!
+
+Response:
+     We thank the reviewer for the comments.
+
+
+ Comment:
+Page2 - paragraph3: Curvilinear masks are written using Multibeam-mask writers. All
+multi-beam mask writers do rasterization, i.e. convert geometry data (Bezier/B-splines
+or piecewise linear polygon) to grey pixels. So, the premise of binary representation is
+not true. In fact, high accuracy can be achieved if the mask optimization understands
+the pixel size of the mask writer. So please update the paragraph accordingly.
+
+Response:
+     We thank the reviewer for the insightful comment. Several sentences about the
+binary representation is revised, and the following sentences are added to the paper.
+“It is worthy to note that the multi-beam mask writers used to manufacture curvilinear masks
+convert geometric descriptions (for instance Bezier or B-spline curves) into greyscale pixel maps,
+thus the assumption of a strictly binary mask representation is not necessary. Actually, if the pixel-
+based mask optimization explicitly accounts for the pixel size and the number of available dose
+levels of multi-beam mask writers, high-fidelity curvilinear features can be realized.”
+
+
+ Comment:
+Page7 - section2.4: The description provided is very similar to implicit Bezier, which is
+already used in the industry standards. How is this different from that? Add some info
+to compare it with Impicit Bezier curves defined in the Multigon format used in
+photomask industry. If it isn't different then use the standard industry term of Implicit
+Bezier.
+
+Response:
+      We thank the reviewer for the comment. The procedure of offline knot
+reconstruction is the same as the industry standard SEMI P49-0823, as we pointed out
+in the previous version of the paper, i.e., “The procedure of reconstruction is described
+as follows, and reader can refer[18] and SEMI P49-0823 for details.”
+     In the revised version, to make it more clear, the related sentence is changed as
+follows at end of the first paragraph in section 2.4:
+“The procedure is the same as the implicit cubic Bezier curve in the industry standard SEMI P49-
+0823, and it is described as follows for the convenience of readers. Also, readers can refe[18] and
+SEMI P49-0823 for the details.”
+                                  Click here to access/download;Figure;compare_M1_1_error_history.eps
+
+
+                5.0
+                               proposed method
+                4.5            pixel-based method
+
+
+
+Error (log scale)
+                4.0
+
+                3.5
+
+                3.0
+
+                      0   10                      20                                        30
+                           Iteration
+                                  Click here to access/download;Figure;compare_M1_2_error_history.eps
+
+
+
+                5.0
+                               proposed method
+                4.5            pixel-based method
+
+
+
+Error (log scale)
+                4.0
+
+                3.5
+
+                3.0
+
+                2.5
+                      0   10                      20                                        30
+                           Iteration
+                                  Click here to access/download;Figure;compare_M1_3_error_history.eps
+
+
+
+
+                5.0
+                               proposed method
+                               pixel-based method
+                4.5
+
+
+
+Error (log scale)
+                4.0
+
+                3.5
+
+                3.0
+
+                      0   10                      20                                        30
+                           Iteration
+           Click here to access/download;Figure;ex_Bezier_curve.eps
+
+
+
+
+     p1   p2
+
+
+
+
+p0                                           p3
+Click here to access/download;Figure;ex_design_variable.eps
+Click here to access/download;Figure;ex_knots_first_1.eps
+Click here to access/download;Figure;ex_knots_second_1.eps
+Click here to access/download;Figure;ex_normal_velocity_1.eps
+Click here to access/download;Figure;ex_normal_velocity_2.eps
+                    Click here to access/download;Figure;ex_offline_knots_reconstruction.eps
+
+
+
+
+               pk
+                1
+                       pk2
+
+
+          pk
+           0
+                                            pk 3
+
+
+
+
+pk
+ 0
+     −1
+                                                                                  pk3
+                                                                                        +1
+Click here to access/download;Figure;ex_rasterization_1.eps
+
+
+
+
+        Ω
+         Click here to access/download;Figure;ex_rasterization_2.eps
+
+
+
+
+n
+    qk
+                Ω
+
+     n
+Click here to access/download;Figure;ex_target_smooth_1.eps
+Click here to access/download;Figure;M1_10_evl_points.eps
+Click here to access/download;Figure;M1_10_max_epe.eps
+                Click here to access/download;Figure;M1_10_opc_epe_histogram.eps
+
+
+
+
+    8
+    6
+Count
+    4
+    2
+    0 −1      0                                         1
+           EPE (nm)
+Click here to access/download;Figure;M1_10_opc_result.eps
+Click here to access/download;Figure;M1_1_evl_points.eps
+Click here to access/download;Figure;M1_1_max_epe.eps
+                     Click here to access/download;Figure;M1_1_opc_epe_histogram.eps
+
+
+
+
+    15
+
+Count
+    10
+
+        5
+
+        0   −2      0                                    2
+                 EPE (nm)
+Click here to access/download;Figure;M1_1_opc_result.eps
+Click here to access/download;Figure;M1_2_evl_points.eps
+Click here to access/download;Figure;M1_2_max_epe.eps
+                     Click here to access/download;Figure;M1_2_opc_epe_histogram.eps
+
+
+
+
+    15
+
+    10
+Count
+        5
+
+        0   −2         0                                                     2
+                 EPE (nm)
+Click here to access/download;Figure;M1_2_opc_result.eps
+Click here to access/download;Figure;M1_3_evl_points.eps
+Click here to access/download;Figure;M1_3_max_epe.eps
+                     Click here to access/download;Figure;M1_3_opc_epe_histogram.eps
+
+
+
+
+    10
+Count
+        5
+
+        0   −2      0                                  2
+                 EPE (nm)
+Click here to access/download;Figure;M1_3_opc_result.eps
+Click here to access/download;Figure;M1_4_evl_points.eps
+Click here to access/download;Figure;M1_4_max_epe.eps
+                       Click here to access/download;Figure;M1_4_opc_epe_histogram.eps
+
+
+
+
+    15
+
+    10
+Count
+        5
+
+        0−2   −1      0     1                                                   2
+                   EPE (nm)
+Click here to access/download;Figure;M1_4_opc_result.eps
+Click here to access/download;Figure;M1_5_evl_points.eps
+Click here to access/download;Figure;M1_5_max_epe.eps
+                     Click here to access/download;Figure;M1_5_opc_epe_histogram.eps
+
+
+
+
+    20
+
+Count
+    10
+
+
+        0   −1      0                                     1
+                 EPE (nm)
+Click here to access/download;Figure;M1_5_opc_result.eps
+Click here to access/download;Figure;M1_6_evl_points.eps
+Click here to access/download;Figure;M1_6_max_epe.eps
+                      Click here to access/download;Figure;M1_6_opc_epe_histogram.eps
+
+
+
+
+    20
+
+Count
+    10
+
+
+        0   −1    0       1                                            2
+                 EPE (nm)
+Click here to access/download;Figure;M1_6_opc_result.eps
+Click here to access/download;Figure;M1_7_evl_points.eps
+Click here to access/download;Figure;M1_7_max_epe.eps
+                   Click here to access/download;Figure;M1_7_opc_epe_histogram.eps
+
+
+
+
+    30
+
+Count
+    20
+
+    10
+
+        0 −1    0       1
+               EPE (nm)
+Click here to access/download;Figure;M1_7_opc_result.eps
+Click here to access/download;Figure;M1_8_evl_points.eps
+Click here to access/download;Figure;M1_8_max_epe.eps
+                Click here to access/download;Figure;M1_8_opc_epe_histogram.eps
+
+
+
+
+    8
+    6
+Count
+    4
+    2
+    0 −1     0                                     1
+           EPE (nm)
+Click here to access/download;Figure;M1_8_opc_result.eps
+Click here to access/download;Figure;M1_9_evl_points.eps
+Click here to access/download;Figure;M1_9_max_epe.eps
+                     Click here to access/download;Figure;M1_9_opc_epe_histogram.eps
+
+
+
+
+    20
+    15
+Count
+    10
+        5
+        0   −1        0                                       1
+                 EPE (nm)
+Click here to access/download;Figure;M1_9_opc_result.eps
+Declaration of competing interests
+
+
+
+
+               Declaration of interests
+
+               ☒The authors declare that they have no known competing financial interests or personal relationships
+               that could have appeared to influence the work reported in this paper.
+
+               ☐The authors declare the following financial interests/personal relationships which may be considered
+               as potential competing interests:
+Revised manuscript (marked up)                                                                        Click here to view linked References
+
+
+
+
+                                      Parametric curvilinear mask optimization
+                                               with rigorous gradient
+
+                                                        Qi Xiaa,∗, Shiyuan Liua,∗
+                                              a School of Mechanical Science and Engineering,
+
+                                 Huazhong University of Science and Technology, Wuhan, Hubei 430074, China
+
+
+
+
+                Abstract
+
+                A general framework is proposed for the parametric curvilinear mask optimization with rigorous
+                gradient.    As an example of parametric curve, the piecewise cubic Bézier curve is employed
+                to represent the curvilinear contour of mask. By optimizing only the normal displacements of
+                online knots and reconstructing the offline knots, the number of design variables is reduced while
+                maintaining the smoothness of curve. Rigorous gradient of the objective function is derived, in
+                which continuum-based formulations of design velocity and indicator function provide important
+                links between the variation of design variable and the variation of mask transmittance. Gradient
+                based optimization with simple strategy of adaptive step size is implemented. In addition, the
+                methods of rasterization and target smoothing are presented. The proposed framework can be
+                employed for any parametric curvilinear mask and even for Manhattan-style mask. Experiments
+                with masks whose average critical dimension is 87 nm and area is 2.36 µm2 demonstrate that the
+                optimization can be completed around 2 seconds and the average of maximum edge placement
+                error is below 3 nm.
+                Keywords: Lithography, Curvilinear mask, Parametric curve, Rigorous gradient, Gradient-based
+                optimization, Smooth target
+
+
+                1. Introduction
+
+                    Lithography is a critical step in integrated circuit manufacturing, aiming to faithfully transfer
+                circuit patterns from mask to wafer. However, as critical dimension continues to shrink and device
+                density keeps increasing, the optical proximity effect becomes increasingly prominent, leading to
+                severe distortion of the patterns transferred to wafer and narrow process window. Under such
+                circumstances, conventional mask optimization (MO) methods based on Manhattan-style mask
+
+
+                   ∗ Corresponding authors
+
+                    Email addresses: qxia@hust.edu.cn (Qi Xia), shyliu@hust.edu.cn (Shiyuan Liu)
+
+
+                Preprint submitted to Elsevier                                                               August 13, 2026
+exhibit serious limitations, and those based on curvilinear mask have become an important trend [1–
+4]. The curvilinear masks are composed of 2D shapes enclosed by smooth curves, rather than
+polygons in the Manhattan-style masks, thus offering higher flexibility in geometric description
+and a broader solution space for MO. As a result, it can significantly improve the fidelity of
+pattern transfer and extend the process window [1, 2].
+   According to the approach employed to represent the curvilinear mask, there are the pixel-
+based method, the level-set-based method, and the parametric-curve-based method for curvilinear
+MO. The representation approach and the corresponding gradient analysis not only determine
+the flexibility in changing the mask layout and the size of solution space, but also influences and
+efficiency of optimization.
+   In the pixel-based mask optimization [5–10], the mask is represented as a 2D array of pixels,
+and the value of pixel represents the transmission in a small region. The pixel-based optimization
+of binary mask is often considered in the literature, and it is essentially a 0-1 integer optimization
+problem. A relaxation strategy followed with binarization is generally employed to convert it
+into a continuous-variable optimization problem. Although rigorous gradient can be obtained, the
+optimization is generally not so efficient due to the large number of pixel and the strong nonlinearity
+introduced by the binarization. First, the smaller the pixel size, the richer the geometric details
+that can be represented, and better fidelity can be reached, but the computational costs increase
+rapidly. Second, a high degree of binarization introduces strong nonlinearity; but if the binarization
+is insufficient, gray pixels cannot be completely removed. It is worthy to note that the multi-beam
+mask writers used to manufacture curvilinear masks convert geometric descriptions (for instance
+Bézier or B-spline curves) into greyscale pixel maps, thus the assumption of a strictly binary mask
+representation is not necessary. Actually, if the pixel-based mask optimization explicitly accounts
+for the pixel size and the number of available dose levels of multi-beam mask writers, high-fidelity
+curvilinear features can be realized.
+   In the level-set-based mask optimization [2, 11–17], the contour of mask is represented as the
+zero-level set of a level-set function (LSF). During the optimization, a gradient-based optimization
+algorithm is used to iteratively update the LSF, thereby implicitly modifying the mask contour.
+The value of LSF provides a natural binarization, and thus the optimization is generally more
+stable than the pixel-based one. In this method, the design variable is the contour of mask,
+which is infinite-dimensional. In numerical implementation, the infinite-dimensional optimization
+problem is converted to a finite-dimensional one. However, the number of design variables is still
+large, and the convergence rate is generally slow.
+
+
+
+                                                  2
+   Despite the difficulties mentioned above, the pixel-based and level-set-based curvilinear MO
+have achieved great success in past decades. In our view, the success not only comes from their
+geometric flexibility but also from the rigorous gradient of the design variables and the subsequent
+gradient-based optimization.
+   Recently, many efforts are directed toward curvilinear MO with the masks being represented
+by parametric curves [18–25]. Since a relatively small number of parameters can describe complex
+curvilinear mask contours, the parametric-curve-based mask optimization often has much less
+design variables, and thus the efficiency of optimization can be effectively improved.
+   However, obtaining the rigorous gradient of an objective function with respect to the design
+variables constitutes a major technical difficulty. Generally, the objective function to be minimized
+is the edge placement error (EPE) or the L2 norm of the difference between exposed and target
+patterns, and the design variables are the position of control points or weights of basis functions. If
+the gradient is not available, some gradient-free optimization methods are often employed [21, 24],
+for instance the genetic algorithm or particle swarm optimization, but these methods are not so
+efficient as the gradient based optimization. Another alternative way to resolve this difficulty is to
+use EPE as an approximation of the rigorous gradient [22]. Although this way is effective in many
+cases, an EPE only reflects the impact of mask bias at an evaluation point, while ignoring the
+influences of mask in the neighborhood around the evaluation point. Actually, this is the reason
+why the matrix-OPC (optical proximity correction) via MEEF (mask error enhancement factor)
+matrix is more effective than the EPE-based OPC [26–28]. However, because calculation of MEEF
+matrix is computationally expensive, it is only used in critical regions.
+   In this paper, a general framework is proposed for the parametric curvilinear mask optimization
+with rigorous gradient. As an example of the parametric curve, piecewise cubic Bézier curve is
+employed to represent the contour of mask. The design variables are carefully selected to compress
+their total number, and the design velocity due to the variation of design variables are obtained.
+The gradient of the objective function with respect to the design variable is rigorously derived
+for gradient-based optimization, which constitutes an important contribution of the present study.
+The proposed framework can be used for curvilinear masks represented by any parametric curves
+and even for Manhattan-style masks.
+
+
+
+
+                                                  3
+2. Representation of curvilinear mask
+
+2.1. Cubic Bézier curve
+
+    In the present study, the contour Γ of mask Ω ∈ R2 is described by many segments of cubic
+Bézier curves, and the coordinates of points on such a segment is defined as [29]
+                                               3
+                                               X
+                                      C(s) =         Bi (s)pi ,   0≤s≤1                                       (1)
+                                               i=0
+
+where Bi (s) is the Bernstein polynomial Bi (s) = C3i si (1 − s)3−i ; pi = (xi , yi ) are the control points
+or the so-called knots. As shown in Fig. 1, among the four knots of a cubic Bézier curve, p0 and p3
+lie on the curve, and they are called the “online knots”; p1 and p2 are not on the curve, and they
+are called the “offline konts”. For a closed curve comprises many segments of cubic Bézier curve,
+an online knot is both the 0-th knot for one segment and the 3-rd knot for the previous segment.
+    The tangent vector and unit normal vector of Bézier curve are given by
+                                                 3
+                                         dC(s) X dBi (s)
+                                  t(s) =      =          pi ,           0≤s≤1                                 (2)
+                                          ds    i=0
+                                                    ds
+
+                                                          1
+                                             n(s) =             Rt(s)                                         (3)
+                                                       ||t(s)||
+where R is a matrix to rotate a vector by π/2.
+                                               p1                 p2
+
+
+
+
+                             p0                                                    p3
+
+
+
+Figure 1: An example of cubic Bézier curve and its four knots. The blue curve is the cubic Bézier curve; the red
+dots are the knots. p0 and p3 are the “online knots”; p1 and p2 are the “offline konts”
+
+
+
+    As can be seen in Fig. 1, the shape of curve is controlled by using only four knots, and the
+online knots will be employed to define the design variables in the parametric curvilinear OPC.
+Therefore, while maintaining sufficient geometric flexibility, the number of design variables can be
+significantly reduced as compared with the pixel-based or the level-set-based OPC method. Such
+reduction is highly helpful to improve the efficiency of optimization.
+
+
+
+
+                                                         4
+2.2. Rasterization
+
+   Given the mask contour, the transmittance of mask should be constructed on a discrete grid
+for subsequent numerical computations, and such a process is called rasterization, which amounts
+to compute the indicator function of the region Ω occupied by the mask.
+   For a two dimensional region Ω, its indicator function is defined as
+                                            
+                                            1, if q ∈ Ω
+                                            
+                                    χ(q) =                                                           (4)
+                                            0, otherwise
+                                            
+
+
+To facilitate numerical computation and derivation of rigorous gradient as will be presented in
+section 4.2, Eq. (4) is rewritten as [30]
+                                                  Z
+                                        χ(q) =         δ(q − q ′ )dΩ                                 (5)
+                                                   Ω
+
+where δ(·) is the 2D Dirac delta function defined as δ(q − q ′ ) = δ(x − x′ )δ(y − y ′ ), q = (x, y), and
+q ′ = (x′ , y ′ ). The gradient of χ(q) is written as [30, 31]
+                                                  Z
+                                       G(q) = − n(q ′ )δ(q − q ′ )dΓ                                 (6)
+                                                  Γ
+
+where n is the outward unit normal vector of Γ.
+   According to an conservation condition [30, 31], G is approximated by G         e y ) as
+                                                                              ex , G
+                                                                         e = (G
+                                                                               ij    ij
+
+
+                                   e ij = −
+                                              X                       |∆Γk |
+                                   G              n(q k )Dij (q k )                                  (7)
+                                                                        h2
+                                              k
+
+where i, j are the column and row indices of grid points; k is the index of sampling points on the
+boundary Γ; ∆Γk is a small segment of Γ with the point q k = (xk , yk ) being its center and |∆Γk |
+being its length; h is the grid size; Dij (q k ) = d(xk /h − i)d(yk /h − j) is the approximation of the
+2D Dirac delta function, and d(·) is the approximation of 1D Dirac delta function defined as [30]
+                                            
+                                            1 − |r|, |r| ≤ 1
+                                            
+                                     d(r) =                                                    (8)
+                                            0,       |r| > 1
+                                            
+
+
+   Suppose that the mask lies in a simulation domain D ∈ R2 , as shown in Fig. 2(a). The value
+of indicator function at the boundary of D is set to zero. The curvilinear contour Γ is first divided
+into many short segments ∆Γk , and the center points of these segments are taken as the sampling
+points q k in Eq. (7), as shown in Fig. 2(b). In the present study, the length |∆Γk | of these segments
+is set to h/4 so that there are about four segments in one pixel.
+
+
+
+                                                       5
+                                                             e y is integrated along the y direction.
+                e x is integrated along the x direction, and G
+    Thereafter, G ij                                           ij
+
+After the average of the two integrations are obtained, it is clipped to [0, 1], and the result is
+the value of indicator function. The rasterization can be first conducted on a fine grid, and then
+down-sampled to a coarser grid by using the FFT (fast Fourier transform) based interpolation.
+
+
+
+                                                                               n
+                                                                                     qk
+                                 Ω                                                         Ω
+
+                                                                                      n
+
+
+
+
+                           (a)                                                       (b)
+
+
+Figure 2: Pre-processing of mask contour for rasterization. (a) input curvilinear mask and reference domain, (b)
+segments ∆Γk , sampling points q k shown in red color, and unit normal vectors n(q k ).
+
+
+
+
+2.3. Design variables
+
+    During the process of mask optimization, the design variables are iteratively changed by an
+optimization algorithm, and the shape of mask is updated accordingly. In order to reduce the
+number of design variables, maintain sufficient geometric flexibility, and ensure smoothness of
+mask contour, the design variables should be properly selected.
+    First, in order to ensure smoothness of mask contour, only the positions of online knots are
+actively changed during the optimization, and those of the offline knots are passively reconstructed
+after the online knots are changed, as in [18]. The reason is explained as follows. Considering two
+consecutive segments of cubic Bézier curves, the knots of the k-th segment are pk0 , pk1 , pk2 , pk3 , and
+those of the (k+1)-th segment are pk+1
+                                   0   , pk+1
+                                          1   , pk+1
+                                                 2   , pk+1
+                                                        3   . The tangent vector of the k-th segment
+at the end point, i.e., pk3 , is along the direction of vector pk2 pk3 . The tangent vector of the (k+1)-
+th segment at the starting point, i.e., pk+1
+                                         0   , is along the direction of vector pk+1
+                                                                                 0   pk+1
+                                                                                      1   . Note that
+pk3 = pk+1
+       0   . In order to ensure that the tangent direction is continuous at pk3 , the knots pk2 , pk3 , pk+1
+                                                                                                         1
+
+should lie on the same line, which implies that a collineation constraint should be introduced into
+the optimization. Because enforcement of such constraints affects the efficiency of optimization,
+
+
+
+                                                        6
+the strategy that only actively optimizes the positions of online knots is adopted. In addition, such
+a strategy halves the number of design variables.
+
+
+
+
+Figure 3: The online knots are restricted to move along the direction of the normal vector of the curve at the knots.
+The black curves represent the mask contours; the blue lines represent the normal vectors; the red dots represent
+knots.
+
+
+
+    Second, in order to prevent self-crossing of the optimized Bézier curve, the online knots are
+restricted to move along the normal direction of the curve. As can be seen in Fig. 3, when the
+distance between neighboring online knots are sufficiently large and the online knots does not
+move too far, self-crossing can be prevented. Accordingly, the design variables in the optimization
+are selected as the movement distances of the online knots along the normal direction from their
+original positions.
+
+2.4. Reconstruction of offline knots
+
+    After the online knots have been updated in an iteration during the optimization, the offline
+knots need to be reconstructed, and then a new Bézier curve is obtained with all the knots according
+to Eq. (1). The procedure is the same as the implicit cubic Bézier curve in the industry standard
+SEMI P49-0823, and it is described as follows for the convenience of readers. Also, readers can
+refer [18] and SEMI P49-0823 for the details.
+    As illustrated in Fig. 4, pk−1
+                               0   , pk0 , pk3 , and pk+1
+                                                      3   are online knots. For the k-th segment of curve,
+there are only two knots up to now, i.e., pk0 and pk3 , and the other two knots pk1 and pk2 need to be
+reconstructed. First, the angle bisectors of ∠pk−1
+                                               0   pk0 pk3 and ∠pk0 pk3 pk+1
+                                                                         3   are constructed. Second,
+tangent lines perpendicular to the bisectors are obtained. Finally, at a certain distance from pk0
+along the tangent line, the offline knot pk1 is generated, and the other offline knot pk3 is generated
+similarly. After applying the same procedure to the (k-1)-th segment of curve, the reconstructed
+offline knot pk−1
+              2   and pk1 , the online knots pk−1
+                                              3   (being identical to pk0 ), are on the same line.
+Therefore, the tangent of updated curve are continuous at pk0 , which ensures the smoothness of
+
+
+                                                         7
+curve. It is worth noting that because only the online knots need to be stored into the file of mask,
+the size of file can be reduced by 50%.
+
+                                                  pk
+                                                   1
+                                                                  pk  2
+
+
+                                      pk
+                                       0
+                                                                             pk
+                                                                              3
+
+
+
+
+                  pk
+                   0
+                       −1
+                                                                                                pk
+                                                                                                 3
+                                                                                                     +1
+
+
+
+
+Figure 4: Reconstruction of offline knots. Blue dots represent online knots that are actively changed; red dots
+represent offline knots that are passively reconstructed; green dashed lines represent bisectors of angle; orange lines
+are the tangent lines.
+
+
+
+
+2.5. Variation of mask contour and design velocity
+
+    Suppose that the position of a knot pi is changed along the direction of a unit vector di , and
+define the variation of pi as
+                                                       δpi = di δti                                                (9)
+
+where δti can be regarded as the magnitude of δpi . Then, substituting δpi into Eq. (1), the
+variation of coordinates of the points on mask contour is given as
+
+                                           δC pi = Bj (s)δpi = Bj (s)di δti                                       (10)
+
+where the subscript j in Bj (s) is the local index of the knot pi in a segment of Bézier curve, and
+j = 0 or 3 for the online knots.
+    Because the variation along the tangent direction only introduces re-parameterization of the
+curve and does not change the shape of mask, only the variation along the normal direction needs
+to be considered. The normal variation of Γ caused by δpi is given by
+
+                                δC pni = ⟨δC pi , n(s)⟩ = ⟨di , n(s)⟩ · Bi (s)δti                                 (11)
+
+where ⟨·, ·⟩ represents the inner product of vectors. In the optimization, since the online knots
+moves in the normal direction, the unit vector di in Eq. (11) is replaced by ni . The term before
+δti in Eq. (11) is usually called the “design velocity” [32, 33], i.e.,
+
+                                              Vnpi = ⟨ni , n(s)⟩ · Bi (s)                                         (12)
+
+
+                                                            8
+Because an online knot belongs to two adjacent segments of curve, Eq. (12) should be applied to
+both of the two segments to compute two design velocities respectively, and the design velocities
+on the rest segments of the mask contour are zero, as shown in Fig. 5.
+
+
+
+
+                             (a) example 1                                                    (b) example 2
+
+Figure 5: Examples of design velocity due to the normal movement of online knots. Red curves are the mask
+contour; red dots are the online konts; blue curves are the envelops of design velocity; black lines are the design
+velocities.
+
+
+
+
+3. Lithography model
+
+3.1. Analytical model
+
+    The Hopkins diffraction theory [34] decouples the contributions of the optical system and the
+mask to the imaging process. The intensity of aerial image is given by
+                     Z Z Z Z +∞
+           I(x, y) =            TCC(f ′ , g ′ ; f ′′ , g ′′ ) · M̂ (f ′ , g ′ ) · M̂ ∗ (f ′′ , g ′′ )
+                                         −∞                                                                               (13)
+                                                 · exp −j2π x(f ′ − f ′′ ) + y(g ′ − g ′′ ) df ′ dg ′ df ′′ dg ′′
+                                                                                         
+
+
+where (x, y) denotes the spatial coordinates at the image plane; (f, g) denotes the spatial frequency
+coordinates at the pupil plane; M̂ (f, g) is the mask diffraction spectrum obtained by Fourier
+transformation of the mask pattern M (x, y); ∗ denotes the complex conjugate; TCC is the
+transmission cross coefficient that describes the imaging characteristics of the optical system, and
+it is written as
+                                                Z Z +∞
+              TCC(f ′ , g ′ ; f ′′ , g ′′ ) =            S(f, g) · H (f ′ + f, g ′ + g) · H ∗ (f ′′ + f, g ′′ + g)df dg   (14)
+                                                  −∞
+
+where S is the normalized source intensity; H is the projection pupil written as
+                                      
+                                      ej 2π
+                                                     p
+                                            λ W,  if f 2 + g 2 ≤ NA
+                                      
+                                                                  λ
+                            H(f, g) =                                                                                     (15)
+                                      0,
+                                      
+                                                  otherwise
+
+
+                                                                     9
+where λ is the wavelength of source; W is the aberration; NA is the numerical aperture. The
+                                   p
+aberration due to defocus is W = ∆z 1 − (f 2 + g 2 )λ2 where ∆z is the defocus.
+   In numerical computation, the TCC is represented by a Hermitian matrix given by
+
+                                                     S(f, g)hf,g h†f,g = HSH†
+                                              X
+                                       T=                                                                               (16)
+                                               f,g
+
+where hf,g is a column vector that denotes the vector form of H shifted by f and g; † denotes
+conjugate transpose; the product hf,g h†f,g can be implemented by the rank-1 update of a Hermitian
+matrix; H is a matrix obtained by concatenating vectors hf,g ; S is a diagonal matrix, and the
+elements on the diagonal are equal to the normalized source intensities. Applying eigenvalue
+decomposition to the Hermitian matrix T, and using the first K dominant eigenmodes, one
+obtains [35]
+                                                              K
+                                                              X
+                            TCC(f ′ , g ′ ; f ′′ , g ′′ ) ≈         µi · φ̂i (f ′ , g ′ ) · φ̂∗i (f ′ , g ′ )           (17)
+                                                              i=1
+
+where µk are the eigenvalues, and φ̂i are the eigenvectors. The eigenvalues and eigenvectors can
+also be obtained by applying singular value decomposition (SVD) to matrix P = HSsqrt [36],
+where Ssqrt is a diagonal matrix, and the elements on the diagonal are equal to the square root
+of normalized source intensities. Since T = PP† , one can readily find out that the eigenvalue
+decomposition of T is equivalent to the SVD of P.
+   With the TCC given by Eq. (17), the intensity of aerial image can be rewritten as [35]
+                           K                                                2       K
+                           X                                                        X                               2
+                                 µi F −1 φ̂i (f, g) · M̂ (f, g)
+                                        
+               I(x, y) =                                                        =         µi φi (x, y) ⋆ M (x, y)       (18)
+                           i=1                                                      i=1
+
+where F −1 denotes the inverse Fourier transform; φi (x, y) is the inverse Fourier transformation of
+the eigenverctor φ̂i (f, g), i.e., φi (x, y) = F −1 {φ̂i (f, g)}, and it is also called the convolution kernel;
+⋆ denotes the two-dimensional convolution.
+   Finally, the pattern obtained in the photoresist is expressed through the Sigmoid function as
+
+                                                                  1
+                                           Z(x, y) =                                                                    (19)
+                                                          1 + e−α(I(x,y)−tr )
+
+where α is the slope parameter; tr is the threshold of photoresist.
+
+
+3.2. Numerical settings
+
+   Under partially coherent illumination, due to the presence of off-axis source points, the highest
+frequency at which diffracted light can pass through the imaging system is fmax = (1 + σ) NA
+                                                                                           λ
+
+where σ is the partial coherence factor. According to the Shannon–Nyquist sampling theorem [37],
+
+
+                                                               10
+for the purpose of correctly describing the aerial image via a 2D discrete pixel array, the sampling
+frequency fs should satisfy fs ≥ 2fmax . Accordingly, the pixel size h should satisfy
+
+                                              1      1
+                                         h=      ≤                                             (20)
+                                              fs   2fmax
+
+Usually, the pixel size is selected based on the critical dimension (CD) of the mask, excluding the
+sub-resolution assist feature (SRAF), for instance
+
+                                                    CD
+                                              h=                                               (21)
+                                                     k
+
+where k is an empirical parameter whose typical value is around 5. After h is selected according
+to Eq. (21), it can be checked by using Eq. (20).
+   The numbers of pixels npixel (the number of rows or columns of the square pixel array) used
+to describe the mask M , the pupil H, and the eigenvector φ̂i are the same. It is chosen to be
+2 to the power of n, such as 128, 256, etc, so that the computational efficiency of fast Fourier
+transformation (FFT) can be maximized. After having chosen the values of h and npixel , the mask
+size is obtained as l = npixel · h. When the actual size of the input mask is less than l, the mask
+is placed at the center of a square bounding box whose size is l. The frequency domain resolution
+∆f is given by ∆f = 1/l. This ∆f is used for mask, pupil, and Hopkins kernels.
+   Finally, in order to calculate the linear convolution (not circular convolution) in the spatial
+domain through inverse Fourier transformation as Eq. (18), npixel needs to satisfy [37]
+
+                                                   4fmax
+                                        npixel ≥         +1                                    (22)
+                                                    ∆f
+
+Eq. (22) is used to check whether the value of h and npixel are set properly.
+   It is worthy to note that applying Eq. (19) to compute the resist image produces high frequency
+components that do not exist in the aerial image. In such circumstance, if the pixel size is not
+adequately reduced, aliasing occurs, which results in distortion of simulated wafer contour and
+directly contributes to errors in EPE. Therefore, the aerial image obtained by Eq. (18) is first
+up-sampled to a fine grid by using the FFT based interpolation, then the resist image is computed
+via Eq. (19). With the high resolution resist image, the pattern contour on wafer and EPEs are
+obtained. In addition, the high resolution resist image is down-sampled to the same grid of aerial
+image by using the FFT based interpolation, and the result is used to compute the pattern error
+and rigorous gradient, which will be described in the next section.
+
+
+
+
+                                                   11
+4. Optimization problem and its solution
+
+4.1. Definition of the optimization problem
+   Suppose that the region Ω occupied by the mask is enclosed in a simulation domain denoted
+as D ∈ R2 , i.e., Ω ⊂ D. The goal of the optimization is to minimize the difference between the
+exposed pattern Z and a target pattern Z0 . Such a difference is defined as
+                                      ZZ
+                                 L=        (Z(q) − Z0 (q))2 dΩ                                 (23)
+                                               D
+
+As explained in section 2.3, the design variables in the optimization are the movement distances
+of the online knots along the normal direction from their original position. Here, they are denoted
+as ti . Therefore, the mask optimization problem is defined as
+
+                                             t∗i = arg min L(ti )                              (24)
+                                                        ti
+
+Eq. (24) is an unconstrained optimization problem. One can also put box constraints on the design
+variables, i.e., tmin ≤ ti ≤ tmax , to prevent the online knot from moving too far. Such constraints
+may be helpful to ensure sufficient width of line or space which relates to the manufacturability
+of masks. Because the issue of manufacturability is not the focus of the present study, such box
+constraints are not considered in the optimization.
+
+4.2. Rigorous gradient
+   The rigorous gradient of the objective function L with respect to the design variables ti is an
+important issue for the mask optimization based on parametric curve, and it will be addressed in
+the following. The variation of L is written as
+                                          ZZ
+                                    δL =       2(Z − Z0 )δZ dΩ                                 (25)
+                                                   D
+
+According to Eq. (19), we have
+                                           δZ = αZ(1 − Z) · δI                                 (26)
+
+According to Eq. (18), we have
+                                    K
+                                    X
+                             δI =         µi [Ai (φi ⋆ δM )∗ + A∗i (φi ⋆ δM )]                 (27)
+                                    i=1
+
+where Ai = φi (x, y) ⋆ M (x, y).
+   Substituting Eqs. (26)-(27) to Eq. (25), and picking out δM via the relation (f ⋆g)·p = f ·(g ◦p)
+where · denotes the inner production and ◦ denotes the cross-correlation[5], we have
+                                       ZZ
+                                δL = 4     ∇LM (q) · δM (q) dΩ                                 (28)
+                                                D
+
+
+                                                       12
+where ∇LM is given by
+                                   K
+                                   X
+                                                      α(Z − Z0 )Z(1 − Z) · Ai ⋆ φ∗i
+                                                                           
+                          ∇LM =          µi Re                                                    (29)
+                                   i=1
+
+As one can see in Eq. (29), ∇LM is the gradient of mask transmittance commonly used in the
+pixel-based optimization, and it is called the “gradient density” in the present study.
+   When the transmittance of mask is 0 or 1, M is equal to the indicator function of Ω, i.e.,
+M (q) = χ(q). With the indicator function given in Eq. (5), the variation of M (q) due to the
+normal variation of mask contour is given by
+                                         Z
+                              δM (q) =      δ(q − q ′ ) δC pni (q ′ ) dΓ                          (30)
+                                                     Γ
+
+where δ(q − q ′ ) is the 2D Dirac delta function; the normal variation of mask contour δC pni (q ′ ) is
+given by Eq. (11). Substituting Eq. (30) to Eq. (28), and using the sifting property of the Dirac
+delta function, we obtain                    Z
+                                    δL = 4           ∇LM (q) · δC pni (q) dΓ                      (31)
+                                                 Γ
+
+Substituting Eqs. (11) and (12) into Eq. (31), we have
+                                       Z
+                                δL = 4 ∇LM (q) · Vnpi (q) δti dΓ                                  (32)
+                                             Γ
+
+Therefore, the rigrous derivative of L with respect to ti is
+                                          Z
+                                  ∂L
+                                      = 4 ∇LM (q) · Vnpi (q) dΓ                                   (33)
+                                  ∂ti      Γ
+                                                                                      p
+Since an online knot only effects two adjacent segments of curve Γk−1 and Γk , Vn i (q) is zero on
+the rest parts of the mask contour, as shown in Fig. 5. The integration in Eq. (33) can only be
+performed on the two segments. Because the value of ∂L/∂ti is affected by the length of the curve
+segments Γk−1 and Γk , the length of Bézier curve segments should be uniform so that the impact
+of length can be eliminated.
+   The present study provides a general framework for parametric curvilinear mask optimization
+with rigorous gradient. As one can see, there are three important links in the derivation of rigorous
+gradient. First, using the analytical function of parametric curve, the link between variation of
+design variable and variation of mask contour is obtained, and it is called the “design velocity”, as
+can be seen in Eq. (12). Second, using the analytical indicator function of the region enclosed by
+the mask contour, the link between variation of mask contour and variation of mask transmittance
+is obtained, as can be seen in Eq. (30). Third, the rigorous gradient is obtained by the integrating
+on the contour the product of gradient density and design velocity, as can be seen in Eq. (33).
+
+
+                                                          13
+   According to such a process, the framework can be applied to any parametric curves, for
+instance the B-spline or non-uniform rational B-Spline. In addition, one can see that the proposed
+framework can also be applied to Manhattan-style masks. When an edge Γi in the Manhattan-
+style mask is perturbed, the design velocity corresponds to the perturbation is Vn = 1, and the
+                                                   R
+derivative of the perturbation is simply given by 4 Γi ∇LM dΓ.
+
+4.3. Optimization method
+
+   With the derivative given in Eq. (33), the optimization problem defined in Eq. (24) is solved by
+using a gradient-based method. In the present study, the steepest descent algorithm and a simple
+strategy to adjust the step size is employed.
+   According to the steepest descent algorithm, the design variables ti are updated according to
+
+                                                            ∂L
+                                          tk+1
+                                           i   = tki − sk                                          (34)
+                                                            ∂ti
+
+where the super-script represents the step of iteration; sk is the step size used in the k-th iteration.
+The strategy to adjust the step size is: (1) if the value of objective function is increased by a
+certain ratio, the step size is reduced. For instance, if Lk ≥ Lk−1 , then sk = 0.6sk−1 . (2) if the
+value of objective function is reduced by a certain ratio, the step size is enlarged. For instance, if
+Lk ≤ 0.9Lk−1 , then sk = 1.05sk−1 .
+   The line search in classical optimization methods is not incorporated into the optimization
+because it requires several attempts of step size in each iteration, which needs considerable
+computation for lithography imaging simulation.             In our future work, several optimization
+methods will be tested in the proposed framework, including conjugate gradient method, BFGS
+(Broyden–Fletcher–Goldfarb–Shanno) method etc.
+
+4.4. Target pattern
+
+   When the input mask is Manhatten-style, it contains high-frequency features, for instance sharp
+corners and jogs, and they will be lost due to the low-pass filtering effect of the projection imaging
+system. In practical OPC, such features are not required to be exactly transferred to the silicon
+wafer, as long as the EPE at some evaluation points are below an admissible value. Therefore, the
+target pattern Z0 can be accordingly modified, which is usually called “target smoothing” [38, 39].
+   In the present study, the target smoothing is accomplished by using the cubic Bézier curve, and
+the procedure is described in the following. First, classify the edges in the Manhatten-style mask
+into jog, line/space end, short segment, and long segment, according to the length of the edge and
+direction of its two neighboring edges. Second, for each segment, knots are generated according
+
+
+                                                  14
+to several rules, and we call them “Manhattan knots”. Finally, smoothed target is computed by
+using these Manhattan knots.
+    It is worth noting that the Manhattan knots are not used to define the design variables in the
+optimization, because the lengths of curve segments between such knots are not uniform (recall
+the discussion below Eq. (33)). Instead, after the smoothed target is obtained, the curvilinear
+contour is uniformly sampled, and these sampling points are used as the online knots. Thereafter,
+the offline knots are reconstructed, and the collection of these knots are called “curvilinear knots”.
+Examples of Manhattan knots, curvilinear knots, and smoothed target are shown in Fig. 6.
+
+
+
+
+        (a) Manhattan knots                     (b) smooth target                     (c) curvilinear knots
+
+Figure 6: Examples of Manhattan knots, smooth target, and curvilinear knots. The blue lines represent the bounding
+box; the black lines represent the input Manhattan-style mask; the red curves represent the smoothed target; the
+red dots represent the knots.
+
+
+
+    After the smoothed target having being obtained, the target pattern Z0 is computed by using
+the signed distance function Φ of the contour of smoothed target, and it is given by
+
+                                                               1
+                                     Z0 (q) =                                                               (35)
+                                                              Φ(q)     tr
+                                                1 + exp        σ − ln 1−tr
+
+where σ is a parameter that controls the steepness of Z0 around Γ; tr is the threshold parameter
+in Eq. (19). It can be readily verified that Eq. (35) ensures the value of Z0 equal to tr on Γ.
+    The signed distance function Φ is computed by
+
+                                         Φ(q) = sign(q) · dist(q, Γ)                                          (36)
+
+where sign(q) is the sign function; dist(q, Γ) is the minimal Euclidean distance between point q
+and the contour Γ. The distance is computed by using the fast sweeping method [40]. The sign
+
+
+
+                                                       15
+function can be readily obtained by using the indicator function χ(q) in Eq. (4) as
+
+                                      sign(q) = −2 χ(q) + 1                                   (37)
+
+The minus sign in Eq. (37) ensures the gradient vector of the sign function pointing outwards to
+the boundary. The indicator function χ(q) and the distance function dist(q, Γ) are computed on
+a grid refined by 16 times, then Z0 is obtained via Eq. (35), finally it is down-sampled via the
+FFT-based interpolation.
+   In order to further evaluate the fidelity of simulated wafer contour, some evaluation points are
+placed on the smoothed target, and the EPEs at these evaluation points are computed after OPC.
+The evaluation points are generated by using the Manhattan knots through Eq. (1) with s = 0,
+0.5, and 1.
+
+
+5. Experimental results
+
+   The proposed method is implemented into an in-house software “LithoLab”.             The C++
+and Python programming language are used.            The C++ code is compiled into dynamically
+linked libraries, and they are called in the Python code that accomplishes the OPC. The C++
+development tools include Mingw-w64 14.2.0 and Boost.Python 1.87.0; OpenMP is used to
+parallelize the core algorithms; FFTW 3.3.5 is used for fast Fourier transformation; OpenBLAS
+0.3.30 is used to compute TCC and eigenvalue decomposition. Python 3.9.0 and NumPy 2.0.2 is
+used to write the OPC scripts. The computer used in the experiments comprises Windows 10,
+Intel Xeon Gold 6226R CPU, and 128GB memory.
+   The Manhattan-style masks provided in the ICCAD 2013 contest [41] are first scaled by 1.25
+and then used as the input of mask optimization. The parameters of the lithography system
+include: numerical aperture NA = 0.93, wave length λ = 193nm, annular source with σin = 0.7
+and σout = 0.9. Parameters in the resist model are α = 40 and tr = 0.35. Parameter σ = 4.5 in
+Eq. (35). In the numerical computation, the mask is represented by 128 × 128 pixels with the pixel
+size h = 12 nm (thus the area of mask is 2.36 µm2 ); the source is represented by 64 × 64 pixels
+with the resolution ∆fsource = NA/(32λ). The number of TCC kernels is K = 64. The kernels
+are prepared in a pre-processing phase and saved in a file, and the time used to compute TCC
+kernels is 349 ms. The initial step size in the steepest descent optimization is s0 = 1.4, and the
+optimization is terminated after 30 iterations. All the optimizations are conducted with the same
+settings.
+
+
+
+                                                16
+   The smoothed targets and evaluation points are shown in Fig. 7; the results of mask optimiza-
+tions are shown in Fig. 8; the comparison between the smooth targets and the simulated wafer
+contours are shown in Fig. 9. As can be seen in Fig. 8, the optimized curvilinear masks are fairly
+smooth; the line width and space width are reasonable. Also, it can be seen in Fig. 9 that the
+simulated wafer contour is close to the smoothed target and that the maximums of the absolute
+value of EPE arise near corners. The histograms of EPEs at evaluation points are shown in Fig. 10.
+   The maximum of the absolute value of EPE (denoted as E ∗ ), the objective function L, and
+the runtime are provided in Tab. 1. As can be seen, the average of E ∗ is 1.98 nm. In six of the
+ten cases E ∗ is below 2 nm, and in the other four cases E ∗ is relatively large (above 2 nm). In
+the second case E ∗ = 2.96 nm is the largest one. In future work they will be reduced. In Table 1,
+the value of L does not perfectly correlate with E ∗ , since L counts for global difference, but EPE
+is a local indicator of error. The average runtime of the optimizations is 5.35 seconds. According
+to such runtime, OPC for a 100 mm2 wafer area with CD around 87 nm can be finished within
+63 hours using 1000 CPUs. Although accurate imaging simulation requires a vector model of the
+lithography imaging process and it may need more computation time than the scalar model of the
+present study, the results of runtime show the potential for full-chip application.
+   Finally, the pixel-based method is also employed for the OPC, with the same settings as those
+mentioned before, except that the initial step size is s0 = 0.3. The value of the initial step size
+is carefully chosen, and if the value is larger (for instance 0.35) the optimization of many cases
+would be quite oscillating or even do not converge. The objective function is L + w(1 − M )M
+where (1 − M )M is the penalty to binarize the pixel values M , and w is the weight of binarization
+(w = 0.05). The quantitative results of optimization are provided in Table 1. As can be seen, the
+runtime used by the pixel-based optimization is less than that of the proposed method, but E ∗ and
+L are not so good as those of the proposed method. More importantly, the optimized pixel-based
+masks contain many gray pixels.
+   The histories of objective function during optimization of the first three cases are shown
+in Fig. 11, for both the proposed method and the pixel-based method. As can be seen, the
+optimizations by the proposed method converge smoothly, and those by the pixel-based method
+are not sufficiently converged. More importantly, one can clearly see that the convergence rate of
+the proposed method is higher than the pixel-based method.
+   In our view, the advantage of the pixel-based method lies in its ability to generate SRAF that
+extends process window, while the advantage of the parametric curve-based method lies in its
+efficiency in ensuring the fidelity of wafer contour. For a comprehensive OPC solution, the two
+
+
+
+                                                 17
+methods should be intimately combined to deliver both high fidelity pattern and wide process
+window. In our future work, the SRAF will be first generated, and then the contour of SRAF and
+main pattern will be simultaneously optimized by using the proposed method. If the EPE is used
+as an approximation of rigorous derivative, the SRAF cannot be optimized since EPE cannot be
+defined on SRAF. This is another advantage of the proposed framework.
+
+Table 1: Results of curvilinear mask optimization with the masks in the ICCAD 2013 constest (with a scaling factor
+1.25), and the comparison with the pixel-based method. E ∗ (nm) represents the maximum of the absolute value of
+EPE; L (nm2 ) is the L2 norm of pattern error; T (s) represents the runtime.
+     Case            1        2       3        4        5        6       7        8        9       10     mean
+      CD            80       80       75      80       85       84      101      101      84      100      87
+            E∗      2.82    2.96     2.94    1.86     1.37     2.15     1.56    1.36     1.51     1.28    1.98
+ Present
+             L      429     394      591      226      169     220      133       53      133     128      248
+ method
+             T      5.23    5.20     5.29    5.21     5.27     5.40     5.33    5.48     5.59     5.51    5.35
+                ∗
+  Pixel-    E       4.97    4.69    11.05    24.00 5.16        3.63     3.89    3.84     9.84     2.78    7.39
+  based      L      943     1035    2120     3941      524     520      389      177     1130     284     1106
+ method      T      4.40    4.40     4.38    4.33     4.40     4.35     4.38    4.42     4.44     4.42    4.39
+
+
+
+
+6. Conclusions
+
+    Curvilinear mask is flexible in geometric description and offers a broad solution space for
+optical proximity correction (OPC). As a result, it can significantly improve the fidelity of patterns
+transferred to wafer and extend the process window. In this paper, a general framework is proposed
+for parametric curvilinear mask optimization with rigorous gradient. As an example of parametric
+curve, piecewise cubic Bézier curve is employed to represent the curvilinear contour of mask. The
+design variables are judiciously chosen to compress their total number, while maintaining curve
+smoothness and geometry flexibility. By employing the concept of design velocity and gradient
+density, the gradient is rigorously derived, and a gradient-based optimization is achieved. In
+addition, the methods of rasterization, reconstruction of offline konts, and target smoothing are
+also presented. With the masks in ICCAD 2013 contest scaled by 1.25 times (average CD 87 nm),
+each OPC takes about 2 seconds; maximum EPE remains below 5 nm. Under the same settings of
+lithography and optimization, the proposed method outperforms the pixel-based methods in both
+maximum EPE and pattern error. Overall, this framework offers an effective and efficient way
+for the optimization of curvilinear masks and even Manhattan-style masks. Also, after an initial
+
+
+                                                       18
+                 (a) case 1                         (b) case 2                         (c) case 3
+
+
+
+
+                 (d) case 4                         (e) case 5                         (f) case 6
+
+
+
+
+                 (g) case 7                         (h) case 8                         (i) case 9
+
+
+
+
+                                                   (j) case 10
+
+Figure 7: The smoothed target and evaluation points for the masks in the ICCAD 2013 contest (with a scaling factor
+1.25). The blue lines represent the bounding boxes; the black lines represent the input Manhattan-style masks; the
+                                                       19 represent the points where the fidelity of the simulated
+red curves represent the smoothed targets; the black dots
+wafer contour is evaluated.
+                 (a) case 1                         (b) case 2                          (c) case 3
+
+
+
+
+                 (d) case 4                         (e) case 5                          (f) case 6
+
+
+
+
+                 (g) case 7                         (h) case 8                          (i) case 9
+
+
+
+
+                                                    (j) case 10
+
+Figure 8: Results of mask optimizations with the masks in ICCAD 2013 contest (with a scaling factor 1.25). The
+blue lines represent the bounding boxes; the black lines represent the input Manhattan-style masks; the blue curves
+                                                        20represent the simulated wafer contour.
+represent the optimized curvilinear masks; the red curves
+                (a) case 1                         (b) case 2                         (c) case 3
+
+
+
+
+                (d) case 4                         (e) case 5                         (f) case 6
+
+
+
+
+                (g) case 7                         (h) case 8                         (i) case 9
+
+
+
+
+                                                   (j) case 10
+
+Figure 9: Comparison between the smooth targets and the simulated wafer contours. The blue lines represent the
+bounding boxes; the blue curves represent the smooth targets; the red dashed curves represent the simulated wafer
+contour; the star–shaped markers indicate the evaluation21points where the maximum of the absolute value of EPE
+arise.
+                                                         15                                                                                                    15
+       15                                                                                                                                                                                                              20
+                                                                                                                       10
+                                                         10                                                                                                    10
+Count  10                                            Count                                                         Count                                   Count                                                   Count
+                                                                                                                           5                                                                                           10
+            5                                                5                                                                                                     5
+
+            0           −2      0            2               0       −2         0                          2               0    −2        0            2           0−2       −1                  0     1       2           0   −1       0            1
+                             EPE (nm)                                     EPE (nm)                                                     EPE (nm)                                               EPE (nm)                               EPE (nm)
+
+
+                        (a) case 1                                  (b) case 2                                                  (c) case 3                               (d) case 4                                            (e) case 5
+
+                                                                                                                       8
+       20                                                30                                                                                                    20                                                      8
+                                                                                                                       6
+                                                                                                                                                               15                                                      6
+Count                                                Count                                                         Count                                   Count                                                   Count
+                                                         20
+                                                                                                                       4                                       10                                                      4
+       10
+                                                         10                                                            2                                                                                               2
+                                                                                                                                                                   5
+            0           −1    0       1          2           0 −1          0       1                                   0 −1             0              1           0     −1                        0       1           0 −1             0            1
+                             EPE (nm)                                     EPE (nm)                                                    EPE (nm)                                                EPE (nm)                               EPE (nm)
+
+
+                        (f) case 6                                  (g) case 7                                                  (h) case 8                               (i) case 9                                            (j) case 10
+
+                                                                 Figure 10: The histograms of EPEs at evaluation points.
+
+
+
+
+                  5.0                                                                                5.0                                                                                  5.0
+                                             proposed method                                                                          proposed method                                                                proposed method
+                  4.5                        pixel-based method                                      4.5                              pixel-based method                                                             pixel-based method
+                                                                                                                                                                                          4.5
+
+
+
+  Error (log scale)                                                                  Error (log scale)                                                                    Error (log scale)
+                  4.0                                                                                4.0                                                                                  4.0
+                  3.5                                                                                3.5
+                                                                                                                                                                                          3.5
+                  3.0                                                                                3.0
+                                                                                                                                                                                          3.0
+                                                                                                     2.5
+                         0              10              20                30                                   0                 10               20          30                                  0            10               20              30
+                                          Iteration                                                                                  Iteration                                                                     Iteration
+
+
+                                  (a) case 1                                                                                   (b) case 2                                                                  (c) case 3
+
+Figure 11: The history of the objective function during optimization, for both the proposed method and the pixel-
+based method.
+
+
+
+
+                                                                                                                                 22
+layout of SRAF is obtained by other methods, for instance the interference mapping [42, 43], this
+framework can be employed to simultaneously optimize the main pattern and the SRAF.
+
+
+Funding
+
+   National Natural Science Foundation of China (52130504).
+
+
+CRediT authorship contribution statement
+
+   Qi Xia: Writing – review and editing, Methodology, Investigation, Software, Conceptualiza-
+tion. Shiyuan Liu: Writing – review and editing, Investigation, Conceptualization.
+
+
+Declaration of competing interest
+
+   The authors declare the following: Qi Xia, Shiyuan Liu have financial interests in Huazhong
+University of Science and Technology, a university holding patents related to technologies for OPC
+and applications.
+
+
+Data availability
+
+   Data underlying the results presented in this paper are not publicly available at this time but
+may be obtained from the authors upon reasonable request.
+
+
+References
+
+ [1] L. Pang, Inverse lithography technology: 30 years from concept to practical, full-chip reality,
+    Journal of Micro/Nanopatterning, Materials, and Metrology 20 (2021) 030901–030901.
+
+ [2] T. Cecil, D. Peng, D. Abrams, S. J. Osher, E. Yablonovitch, Advances in Inverse Lithography,
+    ACS Photonics 10 (4) (2023) 910–918.
+
+ [3] Y. Yang, K. Liu, Y. Gao, C. Wang, L. Cao, Advancements and challenges in inverse
+    lithography technology: A review of artificial intelligence-based approaches, Light: Science
+    & Applications 14 (1) (2025) 250.
+
+ [4] L. Pang, A. Fujimura, Why the mask world is moving to curvilinear, Journal of Mi-
+    cro/Nanopatterning, Materials, and Metrology 23 (4) (2024) 041503.
+
+
+
+                                                23
+ [5] Y. Granik, Fast pixel-based mask optimization for inverse lithography, Journal of Mi-
+    cro/Nanolithography, MEMS, and MOEMS 5 (4) (2006) 043002.
+
+ [6] X. Ma, G. R. Arce, Generalized inverse lithography methods for phase-shifting mask design,
+    Opt. Express 15 (23) (2007) 15066–15079.
+
+ [7] V. Singh, B. Hu, K. Toh, S. Bollepalli, S. Wagner, Y. Borodovsky, Making a trillion pixels
+    dance, in: Optical Microlithography XXI, Vol. 6924, SPIE, 2008, pp. 264–275.
+
+ [8] X. Ma, G. R. Arce, Pixel-based simultaneous source and mask optimization for resolution
+    enhancement in optical lithography, Optics Express 17 (7) (2009) 5783.
+
+ [9] N. Jia, E. Y. Lam, Pixelated source mask optimization for process robustness in optical
+    lithography, Optics Express 19 (20) (2011) 19384.
+
+[10] S. Sun, F. Yang, B. Yu, L. Shang, X. Zeng, Adaptive ILT via Multi-Level Lithography
+    Simulation, IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems
+    44 (11) (2025) 4341–4354.
+
+[11] D. S. Abrams, L. Pang, Fast inverse lithography technology, in: Optical Microlithography
+    XIX, Vol. 6154, SPIE, 2006, pp. 534–542.
+
+[12] L. Pang, G. Dai, T. Cecil, T. Dam, Y. Cui, P. Hu, D. Chen, K.-H. Baik, D. Peng, Validation
+    of inverse lithography technology (ILT) and its adaptive SRAF at advanced technology nodes,
+    in: Optical Microlithography XXI, Vol. 6924, SPIE, 2008, pp. 276–287.
+
+[13] Y. Shen, N. Wong, E. Y. Lam, Level-set-based inverse lithography for photomask synthesis,
+    Optics Express 17 (26) (2009) 23690.
+
+[14] W. Lv, S. Liu, Q. Xia, X. Wu, Y. Shen, E. Y. Lam, Level-set-based inverse lithography for
+    mask synthesis using the conjugate gradient and an optimal time step, Journal of Vacuum
+    Science & Technology B 31 (2013) 041605.
+
+[15] Y. Shen, Lithographic source and mask optimization with narrow-band level-set method,
+    Optics Express 26 (8) (2018) 10065.
+
+[16] Z. Yu, G. Chen, Y. Ma, B. Yu, A GPU-enabled level-set method for mask optimization,
+    IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems 42 (2023)
+    594–605.
+
+
+
+                                               24
+[17] C. Huang, X. Ma, S. Zhang, M. Lin, N. Porras-Dı́az, G. Arce, Block-based inverse lithography
+    technology with adaptive level-set algorithm, Optics and Laser Technology 182.
+
+[18] Y. Chen, K. Chang, W. Cheng, Y. Tang, Curvilinear mask handling in OPC flow, Journal of
+    Micro/Nanopatterning, Materials, and Metrology 23 (01).
+
+[19] P. Wei, Y. Li, Z. Li, M. Yuan, H. Yang, Implicit function characterization of the curvilinear
+    mask to realize parametric optical proximity correction with a neighborhood parallel tabu
+    search, Applied Optics 62 (18) (2023) 4848.
+
+[20] W. Huang, Y. Li, H. Yang, M. Yuan, Z. Zhang, Z. Li, Z. Li, Fast and high-fidelity EUV
+    curvilinear mask optimization by distance-versus-angle signature, Optics Express 32 (15)
+    (2024) 26292.
+
+[21] H. Yang, Y. Li, M. Yuan, Z. Li, W. Huang, Z. Li, Efficient curvilinear optical proximity
+    correction using non-uniform B-spline curves, Applied Optics 63 (34) (2024) 8818.
+
+[22] S. Zheng, X. Liang, Z. Yu, Y. Ma, B. Yu, M. Wong, Curvilinear optical proximity correction
+    via cardinal spline, in: 2025 62nd ACM/IEEE Design Automation Conference (DAC), IEEE,
+    San Francisco, CA, USA, 2025, pp. 1–7.
+
+[23] S. Kim, S. Zhang, Y. Shin, ML-Guided Curvilinear OPC: Fast, Accurate, and Manufacturable
+    Curve Correction, IEEE Transactions on Semiconductor Manufacturing 38 (1) (2025) 19–28.
+
+[24] W. Huang, Y. Li, Z. Li, Y. He, M. Yuan, Z. Li, High-fidelity curvilinear mask optical proximity
+    correction using tangent angle-arc length curve, Optics Express 33 (11) (2025) 23796.
+
+[25] Y. Granik, S. Saxena, Inverse lithography in polar coordinates, in: DTCO and Computational
+    Patterning V, SPIE, San Jose, United States, 2026, p. 19.
+
+[26] Y. Granik, N. Cobb, MEEF as a matrix, in: 21st Annual BACUS Symposium on Photomask
+    Technology, Vol. 4562, SPIE, 2002, pp. 980–991.
+
+[27] N. Cobb, Y. Granik, Model-based OPC using the MEEF matrix, in: B. J. Grenon, K. R.
+    Kimmel (Eds.), Photomask Technology 2002, Monterey, CA, 2002, p. 1281.
+
+[28] J. Lei, L. Hong, G. Lippincott, J. Word, Model-based OPC using the MEEF matrix II, in:
+    K. Lai, A. Erdmann (Eds.), SPIE Advanced Lithography, San Jose, California, USA, 2014,
+    p. 90520N.
+
+
+
+                                                25
+[29] L. A. Piegl, W. Tiller, The NURBS Book, second edition Edition, Springer, Berlin, 1997.
+
+[30] G. Tryggvason, B. Bunner, A. Esmaeeli, D. Juric, N. Al-Rawahi, W. Tauber, J. Han, S. Nas,
+    Y.-J. Jan, A front-tracking method for the computations of multiphase flow, Journal of
+    Computational Physics 169 (2001) 708–759.
+
+[31] S. Shin, D. Juric, Modeling three-dimensional multiphase flow using a level contour
+    reconstruction method for front tracking without connectivity, Journal of Computational
+    Physics 180 (2002) 427–470.
+
+[32] C. A. C. Silva, M. L. Bittencourt, Velocity fields using NURBS with distortion control for
+    structural shape optimization, Structural and Multidisciplinary Optimization 33 (2) (2006)
+    147–159.
+
+[33] K. K. Choi, N. H. Kim, Structural sensitivity analysis and optimization 1: linear systems,
+    Springer, 2005.
+
+[34] H. H. Hopkins, On the diffraction theory of optical images, Proceedings of the Royal Society
+    of London. Series A. Mathematical and Physical Sciences 217 (1130) (1953) 408–432.
+
+[35] N. Cobb, Fast optical and process proximity correction algorithms for integrated circuit
+    manufacturing, University of California, Berkeley, 1998.
+
+[36] C. Chen, A. Gurhanli, T. Chiang, J. Hong, L. S. Melvin, Abbe singular-value decomposition:
+    Compact Abbe’s kernel generation for microlithography aerial image simulation using singular-
+    value decomposition method, Journal of Vacuum Science & Technology B 26 (6) (2008) 2322–
+    2330.
+
+[37] D. Voelz, Computational Fourier Optics: A MATLAB Tutorial, SPIE, Wash. USA, 2011.
+
+[38] H. Yang, H. Ren, GPU-accelerated inverse lithography towards high quality curvy mask
+    generation, in: Proceedings of the 2025 International Symposium on Physical Design, ACM,
+    Austin TX USA, 2025, pp. 42–50.
+
+[39] H. Sun, Q. Zhang, J. Zhou, J. Gong, C. Jin, J. Zhou, J. Liu, A Hierarchical Inverse Lithography
+    Method Considering the Optimization and Manufacturability Limit by Gradient Descent,
+    Micromachines 16 (7).
+
+[40] S. Bak, J. McLaughlin, D. Renzi, Some improvements for the fast sweeping method, SIAM
+    Journal on Scientific Computing 32 (2010) 2853–2874.
+
+
+                                                26
+[41] S. Banerjee, Z. Li, S. R. Nassif, ICCAD-2013 CAD contest in mask optimization and
+    benchmark suite, in: 2013 IEEE/ACM International Conference on Computer-Aided Design
+    (ICCAD), IEEE, San Jose, CA, USA, 2013, pp. 271–274.
+
+[42] R. J. Socha, D. J. Van Den Broeke, S. D. Hsu, J. F. Chen, T. L. Laidig, N. Corcoran,
+    U. Hollerbach, K. E. Wampler, X. Shi, W. Conley, Contact hole reticle optimization by using
+    interference mapping lithography (IML), in: Microlithography 2004, Santa Clara, CA, 2004,
+    p. 222.
+
+[43] Y. Granik, Qualification of structured curvilinear ILT assist features for production, Journal
+    of Micro/Nanopatterning, Materials, and Metrology 23 (02) (2024) 021302.
+
+
+
+
+                                                27
+             Click here to access/download
+Revised manuscript (unmarked, editable source file)
+                  database.bib
+             Click here to access/download
+Revised manuscript (unmarked, editable source file)
+  parametric_curvilinear_mask_optimization.tex
+

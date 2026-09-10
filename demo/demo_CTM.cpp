@@ -61,7 +61,7 @@ int main(int argc, char** argv){
     SaveTxt::save_mat(simulator._source.get_source_map(), "System_result/source.txt");
     // CTM优化
     auto t_begin = std::chrono::high_resolution_clock::now();
-    CTM_Optimizer optimizer(simulator, cache, 50, 0.9);
+    CTM_Optimizer optimizer(simulator, cache, 100, 0.9);
     Eigen::MatrixXd result= optimizer.optimize();
     auto t_end = std::chrono::high_resolution_clock::now();
     std::cout << "Optimize time: " << std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_begin).count() * 0.001 << " s" << std::endl;

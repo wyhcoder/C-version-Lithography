@@ -38,6 +38,8 @@ namespace litho {
         int sraf_min_aera = 50;
         // MSAA
         int msaa_level = 16;
+        // 参数化曲线光栅化方式：msaa / dirac。
+        std::string rasterizer = "msaa";
         // 曲线类型
         std::string curve_type = "BS";
         double delta = 0.15;
@@ -83,6 +85,9 @@ namespace litho {
             const std::vector<double>& pe_history() const { return _pe_history; }
             const std::vector<double>& time_history() const { return _time_history; }
             const ControlPoints& final_control_points() const { return _main_control_points; }
+            int main_control_point_count() const noexcept { return _num_main_cps; }
+            int sraf_control_point_count() const noexcept { return _num_sraf_cps; }
+            int evaluation_point_count() const noexcept { return _num_eps; }
 
             // 对主图形每个控制点分别沿真实 x/y 方向做 ±delta 中心差分。
             // OpenMP 并行执行 4*num_cps 个扰动任务，SRAF mask 在所有任务中固定。

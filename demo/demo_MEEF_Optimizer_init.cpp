@@ -125,9 +125,14 @@ static void show_optimization_comparison(
         shell_quote(lsm_wafer) + " gray " +
         shell_quote(optimized_mask) + " gray " +
         shell_quote(optimized_wafer) + " gray " +
-        "--title_prefix 'LSM vs Optimized'";
+        "--titles 'LSM Baseline Mask|LSM Baseline Wafer|"
+        "MEEF Optimized Mask|MEEF Optimized Wafer'";
 
-    std::cout << "\n打开可视化窗口：LSM mask / LSM wafer / optimized mask / optimized wafer\n";
+    std::cout << "\n打开可视化窗口：\n"
+              << "  1. LSM Baseline Mask\n"
+              << "  2. LSM Baseline Wafer\n"
+              << "  3. MEEF Optimized Mask\n"
+              << "  4. MEEF Optimized Wafer\n";
     const int status = std::system(command.c_str());
     if (status != 0) {
         std::cerr << "[warning] 可视化脚本退出状态异常: " << status << '\n';
@@ -319,6 +324,8 @@ int main(int argc, char** argv) {
         meef_config.sraf_min_aera = yaml_required<int>(meef_yaml, "sraf_min_aera");
 
         meef_config.msaa_level = yaml_required<int>(meef_yaml, "msaa_level");
+        meef_config.rasterizer = yaml_optional<std::string>(
+            meef_yaml, "rasterizer", "msaa");
         meef_config.curve_type = yaml_required<std::string>(meef_yaml, "curve_type");
         meef_config.delta = yaml_required<double>(meef_yaml, "delta");
         meef_config.dilate_radius = yaml_required<int>(meef_yaml, "dilate_radius");
@@ -333,10 +340,22 @@ int main(int argc, char** argv) {
                   << (meef_config.optimize_wepe_only
                           ? "WEPE key points only"
                           : "all EP points")
-                  << '\n';
+                  << '\n'
+                  << "Curve rasterizer: " << meef_config.rasterizer << '\n';
 
         MEEF_Optimizer optimizer(simulator, cache, meef_config);
         auto t3 = std::chrono::steady_clock::now();
+
+        std::cout << "\n--- MEEF 初始化规模 ---\n"
+                  << "主图形控制点个数 : "
+                  << optimizer.main_control_point_count() << '\n'
+                  << "SRAF 控制点个数   : "
+                  << optimizer.sraf_control_point_count() << '\n'
+                  << "Mx/My 矩阵维度     : "
+                  << optimizer.evaluation_point_count() << " x "
+                  << optimizer.main_control_point_count()
+                  << "（行=EP 点，列=主图形控制点）\n";
+
         const auto task_start = t3;
         auto task_end = task_start;
         std::string task_label = "init-only";
