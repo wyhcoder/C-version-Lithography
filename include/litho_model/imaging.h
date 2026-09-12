@@ -26,6 +26,12 @@ public:
                            double threshold = 0.25,
                            double alpha = 50.0);
 
+    // 在给定基准电场处，把 mask 的方向导数 dM 通过 SOCS/Abbe 模型前向传播，
+    // 返回空中像方向导数 dI。调用者应先对基准 mask 执行一次 compute()。
+    Eigen::MatrixXd compute_aerial_directional_derivative(
+        const Eigen::MatrixXd& mask_direction,
+        const std::vector<Eigen::MatrixXcd>& baseline_electric_field);
+
     // ── 计算的中间变量 ──────────────────────────────────────────────
     // 返回 const 引用，避免每次 CTM 迭代复制全部 K 个复电场
     const std::vector<Eigen::MatrixXcd>& get_electric_field() const noexcept {

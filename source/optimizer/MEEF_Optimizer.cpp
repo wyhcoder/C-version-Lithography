@@ -2,6 +2,7 @@
 #include "ep_select.h"
 #include "imaging.h"
 #include "loss.h"
+#include "level_set_utils.h"
 #include "parametric.h"
 #include "save_txt.h"
 #include <Eigen/SVD>
@@ -26,6 +27,223 @@
 #include <omp.h>
 #endif
 namespace litho {
+
+    namespace {
+
+    struct EpeStatistics {
+        int point_count = 0;
+        int le_1nm_count = 0;
+        double le_1nm_ratio = 0.0;
+        double minimum = 0.0;
+        double median = 0.0;
+        double mean = 0.0;
+        double p90 = 0.0;
+        double p95 = 0.0;
+        double maximum = 0.0;
+    };
+
+    EpeStatistics summarize_epe(const Eigen::RowVectorXd& epe_vector) {
+        EpeStatistics stats;
+        stats.point_count = static_cast<int>(epe_vector.size());
+        if (stats.point_count == 0) return stats;
+
+        std::vector<double> sorted(
+            epe_vector.data(), epe_vector.data() + epe_vector.size());
+        std::sort(sorted.begin(), sorted.end());
+        stats.le_1nm_count = static_cast<int>(std::count_if(
+            sorted.begin(), sorted.end(), [](double value) {
+                return value <= 1.0;
+            }));
+        stats.le_1nm_ratio = static_cast<double>(stats.le_1nm_count) /
+                             stats.point_count;
+        stats.minimum = sorted.front();
+        stats.maximum = sorted.back();
+        stats.mean = epe_vector.mean();
+
+        auto percentile = [&](double fraction) {
+            const double position = fraction * (sorted.size() - 1);
+            const std::size_t lower = static_cast<std::size_t>(
+                std::floor(position));
+            const std::size_t upper = static_cast<std::size_t>(
+                std::ceil(position));
+            const double weight = position - lower;
+            return sorted[lower] * (1.0 - weight) + sorted[upper] * weight;
+        };
+        stats.median = percentile(0.50);
+        stats.p90 = percentile(0.90);
+        stats.p95 = percentile(0.95);
+        return stats;
+    }
+
+    void save_epe_vector(const std::filesystem::path& path,
+                         const Eigen::RowVectorXd& epe_vector) {
+        std::ofstream output(path);
+        if (!output) {
+            throw std::runtime_error(
+                "MEEF_Optimizer: cannot open EPE vector file " +
+                path.string());
+        }
+        output << std::fixed << std::setprecision(10);
+        for (Eigen::Index index = 0; index < epe_vector.size(); ++index) {
+            output << epe_vector(index) << '\n';
+        }
+    }
+
+    EpeStatistics save_epe_statistics(
+        const std::filesystem::path& path,
+        const Eigen::RowVectorXd& epe_vector) {
+        const EpeStatistics stats = summarize_epe(epe_vector);
+        std::ofstream output(path);
+        if (!output) {
+            throw std::runtime_error(
+                "MEEF_Optimizer: cannot open EPE statistics file " +
+                path.string());
+        }
+        output << std::fixed << std::setprecision(10)
+               << "unit nm\n"
+               << "point_count " << stats.point_count << '\n'
+               << "le_1nm_count " << stats.le_1nm_count << '\n'
+               << "le_1nm_ratio " << stats.le_1nm_ratio << '\n'
+               << "min_nm " << stats.minimum << '\n'
+               << "median_nm " << stats.median << '\n'
+               << "mean_nm " << stats.mean << '\n'
+               << "p90_nm " << stats.p90 << '\n'
+               << "p95_nm " << stats.p95 << '\n'
+               << "max_nm " << stats.maximum << '\n';
+        return stats;
+    }
+
+    void save_epe_histogram(const std::filesystem::path& path,
+                            const Eigen::RowVectorXd& epe_vector,
+                            double bin_width_nm) {
+        if (epe_vector.size() == 0) return;
+        if (!std::isfinite(bin_width_nm) || bin_width_nm <= 0.0) {
+            throw std::invalid_argument(
+                "MEEF_Optimizer: EPE histogram bin width must be positive");
+        }
+
+        const double maximum = epe_vector.maxCoeff();
+        const int bin_count = std::max(
+            1, static_cast<int>(std::floor(
+                std::max(0.0, maximum) / bin_width_nm)) + 1);
+        const double maximum_edge_nm = bin_count * bin_width_nm;
+        std::vector<int> counts(bin_count, 0);
+        for (Eigen::Index index = 0; index < epe_vector.size(); ++index) {
+            const double value = epe_vector(index);
+            if (!std::isfinite(value) || value < 0.0) continue;
+            const int bin = std::clamp(
+                static_cast<int>(std::floor(value / bin_width_nm)),
+                0, bin_count - 1);
+            ++counts[bin];
+        }
+
+        const int left = 80;
+        const int right = 30;
+        const int top = 70;
+        const int bottom = 80;
+        const int image_width = std::clamp(
+            left + right + 44 * bin_count, 720, 4800);
+        const int image_height = 560;
+        const int plot_width = image_width - left - right;
+        const int plot_height = image_height - top - bottom;
+        const int axis_bottom = top + plot_height;
+        const int maximum_count = *std::max_element(counts.begin(), counts.end());
+        const int y_step = std::max(
+            1, static_cast<int>(std::ceil(maximum_count / 5.0)));
+        const int y_limit = std::max(1, y_step * 5);
+
+        cv::Mat image(
+            image_height, image_width, CV_8UC3, cv::Scalar(255, 255, 255));
+        const cv::Scalar grid_color(205, 205, 205);
+        const cv::Scalar axis_color(40, 40, 40);
+        const cv::Scalar bar_color(190, 105, 20);  // BGR: blue
+
+        for (int tick = 0; tick <= 5; ++tick) {
+            const int count = tick * y_step;
+            const int y = axis_bottom - static_cast<int>(
+                std::round(static_cast<double>(count) / y_limit * plot_height));
+            cv::line(image, {left, y}, {left + plot_width, y},
+                     grid_color, 1, cv::LINE_AA);
+            cv::putText(image, std::to_string(count), {20, y + 5},
+                        cv::FONT_HERSHEY_SIMPLEX, 0.45, axis_color,
+                        1, cv::LINE_AA);
+        }
+
+        const double bin_width_pixels =
+            static_cast<double>(plot_width) / bin_count;
+        for (int bin = 0; bin < bin_count; ++bin) {
+            const int x0 = left + static_cast<int>(
+                std::round(bin * bin_width_pixels)) + 1;
+            const int x1 = std::max(x0, left + static_cast<int>(
+                std::round((bin + 1) * bin_width_pixels)) - 1);
+            const int y = axis_bottom - static_cast<int>(std::round(
+                static_cast<double>(counts[bin]) / y_limit * plot_height));
+            cv::rectangle(image, {x0, y}, {x1, axis_bottom - 1},
+                          bar_color, cv::FILLED);
+            cv::rectangle(image, {x0, y}, {x1, axis_bottom - 1},
+                          axis_color, 1, cv::LINE_AA);
+        }
+
+        cv::line(image, {left, top}, {left, axis_bottom},
+                 axis_color, 2, cv::LINE_AA);
+        cv::line(image, {left, axis_bottom},
+                 {left + plot_width, axis_bottom}, axis_color, 2, cv::LINE_AA);
+
+        auto format_tick = [](double value) {
+            std::ostringstream text;
+            text << std::fixed << std::setprecision(6) << value;
+            std::string label = text.str();
+            while (!label.empty() && label.back() == '0') label.pop_back();
+            if (!label.empty() && label.back() == '.') label.pop_back();
+            return label.empty() ? std::string("0") : label;
+        };
+        for (int tick = 0; tick <= bin_count; ++tick) {
+            const double tick_nm = tick * bin_width_nm;
+            const int x = left + static_cast<int>(std::round(
+                tick_nm / maximum_edge_nm * plot_width));
+            cv::line(image, {x, axis_bottom}, {x, axis_bottom + 6},
+                     axis_color, 1, cv::LINE_AA);
+            const std::string tick_label = format_tick(tick_nm);
+            int tick_baseline = 0;
+            const cv::Size tick_size = cv::getTextSize(
+                tick_label, cv::FONT_HERSHEY_SIMPLEX, 0.38, 1,
+                &tick_baseline);
+            cv::putText(image, tick_label,
+                        {x - tick_size.width / 2, axis_bottom + 24},
+                        cv::FONT_HERSHEY_SIMPLEX, 0.38, axis_color,
+                        1, cv::LINE_AA);
+        }
+
+        std::ostringstream title_stream;
+        title_stream << "EPE Distribution (bin = " << std::fixed
+                     << std::setprecision(2) << bin_width_nm << " nm)";
+        const std::string title = title_stream.str();
+        int baseline = 0;
+        const cv::Size title_size = cv::getTextSize(
+            title, cv::FONT_HERSHEY_SIMPLEX, 0.8, 2, &baseline);
+        cv::putText(image, title,
+                    {(image_width - title_size.width) / 2, 35},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.8, axis_color,
+                    2, cv::LINE_AA);
+        const std::string x_label = "EPE (nm)";
+        const cv::Size label_size = cv::getTextSize(
+            x_label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+        cv::putText(image, x_label,
+                    {(image_width - label_size.width) / 2, image_height - 20},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, axis_color,
+                    1, cv::LINE_AA);
+        cv::putText(image, "Count", {8, 55},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, axis_color,
+                    1, cv::LINE_AA);
+
+        if (!cv::imwrite(path.string(), image)) {
+            throw std::runtime_error(
+                "MEEF_Optimizer: cannot write EPE histogram " +
+                path.string());
+        }
+    }
+
+    }  // namespace
 
     // 功能：构造并初始化 MEEF 优化器。加载目标/LSM/SRAF，生成或导入控制点，
     //       选择 EP 点，渲染参数化初始掩模，并把初始化元数据保存到输出目录。
@@ -683,11 +901,25 @@ namespace litho {
             write_matrix(dir / "aerial.txt", imaging.aerial_image);
             write_matrix(dir / "wafer.txt", imaging.wafer_image);
             write_cps(dir / "control_points.txt", cps);
+            const EpeEvaluation epe_details = Loss::evaluate_epe(
+                imaging.aerial_image,
+                _eps_result.eps,
+                _simulator._params.resist.threshold,
+                _simulator._params.system.pixel_size_nm);
+            save_epe_vector(dir / "epe_vector.txt", epe_details.epe_vector);
+            const EpeStatistics stats = save_epe_statistics(
+                dir / "epe_statistics.txt", epe_details.epe_vector);
+            save_epe_histogram(
+                dir / "epe_histogram.png",
+                epe_details.epe_vector,
+                _config.epe_histogram_bin_width_nm);
             std::ofstream f(dir / "metrics.txt");
             f << std::setprecision(12)
               << "iteration " << iteration << '\n'
               << "epe_total " << epe << '\n'
               << "epe_mean " << epe / std::max(1, _num_eps) << '\n'
+              << "epe_le_1nm_count " << stats.le_1nm_count << '\n'
+              << "epe_le_1nm_ratio " << stats.le_1nm_ratio << '\n'
               << "wepe_total " << wepe << '\n'
               << "wepe_mean " << wepe / std::max(1, _num_weps) << '\n';
         };
@@ -891,6 +1123,196 @@ namespace litho {
             }
         }
         return result;
+    }
+
+    MEEFMatrixXY MEEF_Optimizer::build_meef_matrix_xy_analytic(
+        const ControlPoints& current_cps) const
+    {
+        if (_config.rasterizer != "dirac") {
+            throw std::invalid_argument(
+                "MEEF_Optimizer: analytic MEEF requires rasterizer=dirac");
+        }
+        if (_config.curve_type != "BS") {
+            throw std::invalid_argument(
+                "MEEF_Optimizer: analytic MEEF currently requires curve_type=BS");
+        }
+
+        const int num_eps = static_cast<int>(_eps_result.eps.rows());
+        std::vector<std::pair<int, int>> cp_indices;
+        for (int contour_idx = 0;
+             contour_idx < static_cast<int>(current_cps.size());
+             ++contour_idx) {
+            for (int cp_idx = 0; cp_idx < current_cps[contour_idx].rows(); ++cp_idx) {
+                cp_indices.emplace_back(contour_idx, cp_idx);
+            }
+        }
+        const int num_cps = static_cast<int>(cp_indices.size());
+        MEEFMatrixXY result{
+            Eigen::MatrixXd::Zero(num_eps, num_cps),
+            Eigen::MatrixXd::Zero(num_eps, num_cps)};
+        if (num_eps == 0 || num_cps == 0) return result;
+
+        // 基准 mask 和复电场只计算一次。之后每一列仅传播解析得到的 dMask。
+        ParametricDemo baseline_parametric(
+            _config.curve_type,
+            _target_mask,
+            _config.msaa_level,
+            _config.rasterizer);
+        Eigen::MatrixXd baseline_mask =
+            baseline_parametric.render_curve(current_cps);
+        baseline_mask.array() += _render_sraf_mask.array();
+
+        Imaging baseline_imaging(_cache);
+        Imaging_Result baseline_result = baseline_imaging.compute(
+            baseline_mask,
+            _simulator._params.resist.threshold,
+            _simulator._params.resist.alpha);
+        const auto& baseline_fields = baseline_imaging.get_electric_field();
+
+        const Eigen::MatrixXd aerial_dx =
+            LevelSetUtils::_gradient_1d(baseline_result.aerial_image, 1.0, 1);
+        const Eigen::MatrixXd aerial_dy =
+            LevelSetUtils::_gradient_1d(baseline_result.aerial_image, 1.0, 0);
+        const Eigen::MatrixXd aerial_gradient_magnitude =
+            (aerial_dx.array().square() + aerial_dy.array().square()).sqrt();
+
+        int worker_count = 1;
+#ifdef _OPENMP
+        worker_count = std::max(1, std::min(num_cps, omp_get_max_threads()));
+#endif
+        // FFTW plan 创建保持串行；每个线程使用独立 plan/buffer 传播 dMask。
+        std::vector<std::unique_ptr<Imaging>> imaging_workers;
+        imaging_workers.reserve(worker_count);
+        for (int worker = 0; worker < worker_count; ++worker) {
+            imaging_workers.push_back(std::make_unique<Imaging>(_cache));
+        }
+
+        std::atomic<bool> task_failed{false};
+        std::mutex error_mutex;
+        std::string first_error;
+        const double threshold = _simulator._params.resist.threshold;
+        const double pixel_size = _simulator._params.system.pixel_size_nm;
+
+        #pragma omp parallel num_threads(worker_count)
+        {
+            int thread_id = 0;
+#ifdef _OPENMP
+            thread_id = omp_get_thread_num();
+#endif
+            Imaging& directional_imaging = *imaging_workers[thread_id];
+            ParametricDemo parametric(
+                _config.curve_type,
+                _target_mask,
+                _config.msaa_level,
+                _config.rasterizer);
+
+            #pragma omp for schedule(dynamic, 1)
+            for (int col_idx = 0; col_idx < num_cps; ++col_idx) {
+                if (task_failed.load(std::memory_order_relaxed)) continue;
+                try {
+                    const auto [contour_idx, cp_idx] = cp_indices[col_idx];
+                    RasterDerivativeXY mask_derivative =
+                        parametric.render_curve_dirac_derivative(
+                            current_cps, contour_idx, cp_idx);
+
+                    const Eigen::MatrixXd dI_dx =
+                        directional_imaging.compute_aerial_directional_derivative(
+                            mask_derivative.dx, baseline_fields);
+                    const Eigen::MatrixXd dI_dy =
+                        directional_imaging.compute_aerial_directional_derivative(
+                            mask_derivative.dy, baseline_fields);
+                    const Eigen::MatrixXd dIx_dx =
+                        LevelSetUtils::_gradient_1d(dI_dx, 1.0, 1);
+                    const Eigen::MatrixXd dIy_dx =
+                        LevelSetUtils::_gradient_1d(dI_dx, 1.0, 0);
+                    const Eigen::MatrixXd dIx_dy =
+                        LevelSetUtils::_gradient_1d(dI_dy, 1.0, 1);
+                    const Eigen::MatrixXd dIy_dy =
+                        LevelSetUtils::_gradient_1d(dI_dy, 1.0, 0);
+
+                    for (int ep = 0; ep < num_eps; ++ep) {
+                        const int row = std::clamp(
+                            static_cast<int>(_eps_result.eps(ep, 0)),
+                            0,
+                            static_cast<int>(baseline_result.aerial_image.rows()) - 1);
+                        const int col = std::clamp(
+                            static_cast<int>(_eps_result.eps(ep, 1)),
+                            0,
+                            static_cast<int>(baseline_result.aerial_image.cols()) - 1);
+                        const double residual =
+                            baseline_result.aerial_image(row, col) - threshold;
+                        const double residual_sign =
+                            residual > 0.0 ? 1.0 : (residual < 0.0 ? -1.0 : 0.0);
+                        const double gradient_raw =
+                            aerial_gradient_magnitude(row, col);
+                        const double denominator = gradient_raw + 1e-12;
+
+                        // 对工程现有 EPE=pixel_size*|I-T|/(|grad I|+eps)
+                        // 完整求导，包含分母 |grad I| 的导数。
+                        auto epe_direction = [&](const Eigen::MatrixXd& dI,
+                                                 const Eigen::MatrixXd& dIx,
+                                                 const Eigen::MatrixXd& dIy) {
+                            double d_gradient = 0.0;
+                            if (gradient_raw > 1e-12) {
+                                d_gradient =
+                                    (aerial_dx(row, col) * dIx(row, col) +
+                                     aerial_dy(row, col) * dIy(row, col)) /
+                                    gradient_raw;
+                            }
+                            return pixel_size *
+                                (residual_sign * dI(row, col) / denominator -
+                                 std::abs(residual) * d_gradient /
+                                     (denominator * denominator));
+                        };
+
+                        const double mx_value =
+                            epe_direction(dI_dx, dIx_dx, dIy_dx);
+                        const double my_value =
+                            epe_direction(dI_dy, dIx_dy, dIy_dy);
+                        result.mx(ep, col_idx) =
+                            std::round(mx_value * 1e6) / 1e6;
+                        result.my(ep, col_idx) =
+                            std::round(my_value * 1e6) / 1e6;
+                    }
+                } catch (const std::exception& e) {
+                    task_failed.store(true, std::memory_order_relaxed);
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    if (first_error.empty()) {
+                        first_error = "analytic MEEF column " +
+                                      std::to_string(col_idx) + ": " + e.what();
+                    }
+                } catch (...) {
+                    task_failed.store(true, std::memory_order_relaxed);
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    if (first_error.empty()) {
+                        first_error = "analytic MEEF column " +
+                                      std::to_string(col_idx) +
+                                      ": unknown exception";
+                    }
+                }
+            }
+        }
+
+        if (task_failed.load(std::memory_order_relaxed)) {
+            throw std::runtime_error(first_error.empty()
+                                         ? "analytic MEEF construction failed"
+                                         : first_error);
+        }
+        return result;
+    }
+
+    MEEFMatrixXY MEEF_Optimizer::build_meef_matrix_xy_selected(
+        const ControlPoints& current_cps) const
+    {
+        if (_config.meef_builder == "finite_difference") {
+            return build_meef_matrix_xy(current_cps);
+        }
+        if (_config.meef_builder == "analytic") {
+            return build_meef_matrix_xy_analytic(current_cps);
+        }
+        throw std::invalid_argument(
+            "MEEF_Optimizer: unsupported meef_builder: " +
+            _config.meef_builder);
     }
 
     // 功能：在 10^start 到 10^end 之间生成 num 个等对数间隔的正数，
@@ -1184,7 +1606,6 @@ namespace litho {
                     current.imaging.wafer_image);
         save_matrix(fs::path(_config.save_file_path) / "target_mask.txt",
                     _target_mask, 0);
-
         _iteration_history.push_back(0);
         _time_history.push_back(0.0);
         _epe_history.push_back(current.epe / std::max(1, _num_eps));
@@ -1231,7 +1652,8 @@ namespace litho {
             }
 
             // 根据当前控制点构建 x、y 方向的 MEEF 矩阵。
-            MEEFMatrixXY meef_matrix = build_meef_matrix_xy(current_cps);
+            MEEFMatrixXY meef_matrix =
+                build_meef_matrix_xy_selected(current_cps);
 
             // 匿名函数（Lambda）：按 EP 权重筛选并缩放 MEEF 矩阵。
             auto apply_meef_weight = [&](Eigen::MatrixXd& matrix) {

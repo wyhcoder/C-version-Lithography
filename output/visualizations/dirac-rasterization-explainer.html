@@ -1,0 +1,134 @@
+<div id="dirac-raster-explainer">
+  <h2>一条曲线线段怎样进入 Dirac 光栅化</h2>
+  <div class="viz-controls">
+    <label class="form-label" for="dre-length">原线段长度：<span id="dre-length-value" class="tabular-nums">0.72 pixel</span></label>
+    <input class="form-range" id="dre-length" type="range" min="0.05" max="4" step="0.01" value="0.72">
+  </div>
+  <svg id="dre-svg" viewBox="0 0 720 230" role="img" aria-labelledby="dre-title dre-desc">
+    <title id="dre-title">Dirac 线段自适应细分示意</title>
+    <desc id="dre-desc">根据线段长度计算细分数，并在线段中点采样。</desc>
+    <line x1="70" y1="105" x2="650" y2="105" stroke="var(--border)" stroke-width="2"/>
+    <line id="dre-edge" x1="70" y1="105" x2="174" y2="105" stroke="var(--viz-series-1)" stroke-width="6"/>
+    <g id="dre-marks"></g>
+    <text x="70" y="155" fill="var(--foreground)">起点</text>
+    <text id="dre-end-label" x="174" y="155" text-anchor="end" fill="var(--foreground)">终点</text>
+    <text id="dre-formula" x="360" y="205" text-anchor="middle" fill="var(--foreground)"></text>
+  </svg>
+  <div class="viz-grid">
+    <div class="card viz-stat">
+      <div class="text-muted">细分数量 K</div>
+      <div id="dre-count" class="viz-stat-value tabular-nums">3</div>
+    </div>
+    <div class="card viz-stat">
+      <div class="text-muted">每个小段长度 Δs</div>
+      <div id="dre-segment" class="viz-stat-value tabular-nums">0.24 pixel</div>
+    </div>
+    <div class="card viz-stat">
+      <div class="text-muted">Dirac 采样位置</div>
+      <div id="dre-samples" class="viz-stat-value tabular-nums">3 个中点</div>
+    </div>
+  </div>
+  <hr>
+  <h2>沿 x 积分：边界跳变怎样变成内部区域</h2>
+  <div class="viz-controls">
+    <label class="form-label" for="dre-scan">扫描位置：<span id="dre-scan-value" class="tabular-nums">x = 3</span></label>
+    <input class="form-range" id="dre-scan" type="range" min="0" max="6" step="1" value="3">
+  </div>
+  <svg viewBox="0 0 720 280" role="img" aria-labelledby="dre-int-title dre-int-desc">
+    <title id="dre-int-title">边界梯度沿 x 累积得到指示函数</title>
+    <desc id="dre-int-desc">左边界贡献正一，右边界贡献负一，前缀和在两个边界之间保持为一。</desc>
+    <text x="35" y="62" fill="var(--foreground)">gx</text>
+    <line x1="90" y1="56" x2="650" y2="56" stroke="var(--border)" stroke-width="2"/>
+    <line x1="250" y1="56" x2="250" y2="20" stroke="var(--viz-series-2)" stroke-width="4"/>
+    <circle cx="250" cy="20" r="6" fill="var(--viz-series-2)"/>
+    <text x="250" y="14" text-anchor="middle" fill="var(--foreground)">+1 左边界</text>
+    <line x1="490" y1="56" x2="490" y2="92" stroke="var(--viz-series-3)" stroke-width="4"/>
+    <circle cx="490" cy="92" r="6" fill="var(--viz-series-3)"/>
+    <text x="490" y="113" text-anchor="middle" fill="var(--foreground)">−1 右边界</text>
+
+    <text x="35" y="175" fill="var(--foreground)">χx</text>
+    <line x1="90" y1="190" x2="650" y2="190" stroke="var(--border)" stroke-width="2"/>
+    <path d="M90 190 L250 190 L250 145 L490 145 L490 190 L650 190" fill="none" stroke="var(--viz-series-1)" stroke-width="4"/>
+    <rect x="250" y="145" width="240" height="45" fill="var(--viz-series-1)" opacity="0.18"/>
+    <text x="165" y="215" text-anchor="middle" fill="var(--foreground)">外部 χ=0</text>
+    <text x="370" y="137" text-anchor="middle" fill="var(--foreground)">内部 χ=1</text>
+    <text x="570" y="215" text-anchor="middle" fill="var(--foreground)">外部 χ=0</text>
+    <line id="dre-scan-line" x1="370" y1="8" x2="370" y2="235" stroke="var(--foreground)" stroke-width="2" opacity="0.7"/>
+    <text id="dre-accumulation" x="360" y="265" text-anchor="middle" fill="var(--foreground)">累计：0 + 1 = 1，因此当前位于图形内部</text>
+  </svg>
+</div>
+
+<style>
+  #dirac-raster-explainer { width: 100%; color: var(--foreground); }
+  #dirac-raster-explainer .viz-controls { margin-bottom: 8px; }
+  #dirac-raster-explainer svg { width: 100%; height: auto; display: block; }
+  #dirac-raster-explainer svg text { font-size: 12px; }
+</style>
+
+<script>
+(() => {
+  const root = document.getElementById('dirac-raster-explainer');
+  const slider = root.querySelector('#dre-length');
+  const lengthValue = root.querySelector('#dre-length-value');
+  const edge = root.querySelector('#dre-edge');
+  const marks = root.querySelector('#dre-marks');
+  const endLabel = root.querySelector('#dre-end-label');
+  const formula = root.querySelector('#dre-formula');
+  const count = root.querySelector('#dre-count');
+  const segment = root.querySelector('#dre-segment');
+  const samples = root.querySelector('#dre-samples');
+  const scan = root.querySelector('#dre-scan');
+  const scanValue = root.querySelector('#dre-scan-value');
+  const scanLine = root.querySelector('#dre-scan-line');
+  const accumulation = root.querySelector('#dre-accumulation');
+  const svgNS = 'http://www.w3.org/2000/svg';
+
+  function redraw() {
+    const length = Number(slider.value);
+    const target = 0.25;
+    const k = Math.max(1, Math.ceil(length / target));
+    const ds = length / k;
+    const x0 = 70;
+    const x1 = x0 + 580 * length / 4;
+    edge.setAttribute('x2', x1);
+    endLabel.setAttribute('x', x1);
+    marks.replaceChildren();
+
+    for (let i = 0; i < k; i += 1) {
+      const x = x0 + (i + 0.5) * (x1 - x0) / k;
+      const circle = document.createElementNS(svgNS, 'circle');
+      circle.setAttribute('cx', x);
+      circle.setAttribute('cy', 105);
+      circle.setAttribute('r', 7);
+      circle.setAttribute('fill', 'var(--viz-series-2)');
+      marks.appendChild(circle);
+    }
+
+    lengthValue.textContent = `${length.toFixed(2)} pixel`;
+    formula.textContent = `K = max(1, ceil(${length.toFixed(2)} / 0.25)) = ${k}`;
+    count.textContent = String(k);
+    segment.textContent = `${ds.toFixed(3)} pixel`;
+    samples.textContent = `${k} 个中点`;
+  }
+
+  slider.addEventListener('input', redraw);
+  function redrawScan() {
+    const position = Number(scan.value);
+    const x = 90 + position * 560 / 6;
+    scanLine.setAttribute('x1', x);
+    scanLine.setAttribute('x2', x);
+    scanValue.textContent = `x = ${position}`;
+    if (x < 250) {
+      accumulation.textContent = '还没有遇到边界：累计值为 0，因此在图形外部';
+    } else if (x < 490) {
+      accumulation.textContent = '越过左边界：0 + 1 = 1，因此在图形内部';
+    } else {
+      accumulation.textContent = '再越过右边界：0 + 1 − 1 = 0，回到图形外部';
+    }
+  }
+
+  scan.addEventListener('input', redrawScan);
+  redraw();
+  redrawScan();
+})();
+</script>

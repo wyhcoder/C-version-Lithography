@@ -23,6 +23,11 @@ struct ContourBezierData {
 // ── 参数化曲线采样结果 ────────────────────────────────────────────────────
 using CurvePoints = Polygon;  // [N x 2] (y,x)
 
+struct RasterDerivativeXY {
+    Eigen::MatrixXd dx;
+    Eigen::MatrixXd dy;
+};
+
 class ParametricDemo {
 public:
     // curve_type: "OA"（直接折线）| "BZ"（三次 Bezier）| "BS"（B样条）
@@ -39,6 +44,16 @@ public:
     // 的 Dirac 指示函数方法进行光栅化，便于和原 MSAA 做一一对照。
     Eigen::MatrixXd render_curve_dirac(
         const Polygons& cps,
+        int num_points = 200,
+        double grid_spacing = 1.0,
+        double segment_fraction = 0.25) const;
+
+    // 论文形状导数：第 contour_index 条 B 样条轮廓的第 control_point_index
+    // 个控制点分别移动一个像素时，Dirac 指示函数 mask 的一阶变化。
+    RasterDerivativeXY render_curve_dirac_derivative(
+        const Polygons& cps,
+        int contour_index,
+        int control_point_index,
         int num_points = 200,
         double grid_spacing = 1.0,
         double segment_fraction = 0.25) const;

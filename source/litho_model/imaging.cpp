@@ -170,4 +170,74 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
     return {std::move(aerial_image), std::move(wafer_image)};
 }
 
+Eigen::MatrixXd Imaging::compute_aerial_directional_derivative(
+    const Eigen::MatrixXd& mask_direction,
+    const std::vector<Eigen::MatrixXcd>& baseline_electric_field) {
+    const int N = _cache.N;
+    const auto& source_weights = _cache.source_ws;
+    const auto& kernels_frequency = _cache.H_k_frequence;
+    const auto& socs_values = _cache.socs_vals;
+    const int kernel_count = static_cast<int>(kernels_frequency.size());
+
+    if (mask_direction.rows() != N || mask_direction.cols() != N ||
+        !mask_direction.allFinite()) {
+        throw std::invalid_argument(
+            "Imaging: mask direction must be a finite cache-sized matrix");
+    }
+    if (static_cast<int>(baseline_electric_field.size()) != kernel_count) {
+        throw std::invalid_argument(
+            "Imaging: baseline electric-field count does not match kernels");
+    }
+
+    const bool use_socs = !socs_values.empty();
+    if ((use_socs && static_cast<int>(socs_values.size()) != kernel_count) ||
+        (!use_socs && source_weights.size() != kernel_count)) {
+        throw std::invalid_argument(
+            "Imaging: optical derivative weights do not match kernels");
+    }
+    const double source_weight_sum = source_weights.sum();
+    if (!std::isfinite(source_weight_sum) || source_weight_sum <= 0.0) {
+        throw std::invalid_argument(
+            "Imaging: source weight sum must be positive for derivative");
+    }
+
+    const std::size_t element_count = static_cast<std::size_t>(N) * N;
+    const double inverse_element_count = 1.0 / static_cast<double>(element_count);
+    Eigen::MatrixXcd direction_frequency(N, N);
+    Eigen::MatrixXcd local_temp(N, N);
+
+    local_temp = mask_direction.cast<std::complex<double>>();
+    FFT::ifftshift_inplace(local_temp);
+    FFT::to_fftw(local_temp, _fft_in);
+    fftw_execute_dft(_plan_fwd, _fft_in, _fft_out);
+    FFT::from_fftw(_fft_out, direction_frequency);
+
+    Eigen::MatrixXd aerial_direction = Eigen::MatrixXd::Zero(N, N);
+    for (int k = 0; k < kernel_count; ++k) {
+        if (baseline_electric_field[k].rows() != N ||
+            baseline_electric_field[k].cols() != N) {
+            throw std::invalid_argument(
+                "Imaging: baseline electric-field dimensions do not match cache");
+        }
+
+        local_temp = direction_frequency.array() * kernels_frequency[k].array();
+        FFT::to_fftw(local_temp, _fft_in);
+        fftw_execute_dft(_plan_inv, _fft_in, _fft_out);
+        FFT::from_fftw(_fft_out, local_temp);
+        local_temp *= inverse_element_count;
+        FFT::fftshift_inplace(local_temp);
+
+        const double weight = use_socs ? socs_values[k] : source_weights(k);
+        // I = sum_k lambda_k |E_k|^2 / W，故
+        // dI = 2 sum_k lambda_k Re(conj(E_k) dE_k) / W。
+        aerial_direction.array() +=
+            2.0 * weight *
+            (baseline_electric_field[k].conjugate().array() *
+             local_temp.array()).real();
+    }
+
+    aerial_direction /= source_weight_sum;
+    return aerial_direction;
+}
+
 }  // namespace litho

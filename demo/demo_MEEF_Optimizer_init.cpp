@@ -4,6 +4,7 @@
 #include "simulation_parameters.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -278,6 +279,15 @@ int main(int argc, char** argv) {
         meef_config.pattern_name = pattern_name;
         meef_config.ls_mask_path = lsm_path.string();
         meef_config.save_file_path = save_path.string();
+        meef_config.meef_builder = yaml_optional<std::string>(
+            meef_yaml, "meef_builder", "finite_difference");
+        meef_config.epe_histogram_bin_width_nm = yaml_optional<double>(
+            meef_yaml, "epe_histogram_bin_width_nm", 0.25);
+        if (!std::isfinite(meef_config.epe_histogram_bin_width_nm) ||
+            meef_config.epe_histogram_bin_width_nm <= 0.0) {
+            throw std::invalid_argument(
+                "meef.epe_histogram_bin_width_nm 必须是正数");
+        }
         meef_config.move_strategy = yaml_required<std::string>(meef_yaml, "move_strategy");
         meef_config.iter = yaml_required<int>(meef_yaml, "iter");
         meef_config.step_tol = yaml_required<double>(meef_yaml, "step_tol");
@@ -341,7 +351,10 @@ int main(int argc, char** argv) {
                           ? "WEPE key points only"
                           : "all EP points")
                   << '\n'
-                  << "Curve rasterizer: " << meef_config.rasterizer << '\n';
+                  << "Curve rasterizer: " << meef_config.rasterizer << '\n'
+                  << "MEEF builder: " << meef_config.meef_builder << '\n'
+                  << "EPE histogram bin width: "
+                  << meef_config.epe_histogram_bin_width_nm << " nm\n";
 
         MEEF_Optimizer optimizer(simulator, cache, meef_config);
         auto t3 = std::chrono::steady_clock::now();
@@ -364,7 +377,7 @@ int main(int argc, char** argv) {
         if (mode == "--build-meef") {
             task_label = "build MEEF matrix";
             auto meef_start = std::chrono::steady_clock::now();
-            MEEFMatrixXY meef = optimizer.build_meef_matrix_xy();
+            MEEFMatrixXY meef = optimizer.build_meef_matrix_xy_selected();
             auto meef_end = std::chrono::steady_clock::now();
             task_end = meef_end;
 

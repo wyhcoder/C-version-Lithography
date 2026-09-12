@@ -1,5 +1,5 @@
 # 共用图案名；修改一次即可同步 mask 和 MEEF。
-PATTERN_NAME: &PATTERN_NAME "img9"
+PATTERN_NAME: &PATTERN_NAME "工字型"
 
 # 成像模型
 system:
@@ -37,8 +37,11 @@ meef:
   pattern_name: *PATTERN_NAME
 
   # 迭代
+  # finite_difference：保留原中心差分；analytic：需配合 BS + dirac
+  meef_builder: "analytic"
+  epe_histogram_bin_width_nm: 0.25 # 可选 0.25 / 0.5 / 1.0 nm
   move_strategy: "xy"
-  iter: 10
+  iter: 30
   step_tol: 0.0                    # 0 表示关闭位移提前终止
   patience: 3
 
@@ -50,7 +53,7 @@ meef:
 
   # 固定 SRAF
   sraf_mask_mode: "lsm"            # lsm / fitted_txt
-  fitted_sraf_txt_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/outputs/opc/DPS/DPS_data/LSmask/工字型BS0.8.txt"
+  fitted_sraf_txt_path: "/Users/wangyuhang/Deskstop/school/Litho_Simulation_cpu/outputs/opc/DPS/DPS_data/LSmask/工字型BS0.8.txt"
   sraf_cp_interval: 5
   sraf_min_cps: 8
   sraf_min_aera: 50                # 字段名沿用现有拼写
@@ -58,7 +61,7 @@ meef:
   # 曲线、EPE 与光栅化
   curve_type: "BS"                 # OA / BZ / BS
   msaa_level: 16                   # 4 / 16 / 64
-  rasterizer: "msaa"               # msaa / dirac
+  rasterizer: "dirac"               # msaa / dirac
   delta: 0.15
   dilate_radius: 2
   interval_line: 5

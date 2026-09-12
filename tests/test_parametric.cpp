@@ -31,6 +31,14 @@ double binary_iou(const Eigen::MatrixXd& lhs, const Eigen::MatrixXd& rhs) {
         : static_cast<double>(intersection) / union_count;
 }
 
+double cosine_similarity(const Eigen::MatrixXd& lhs,
+                         const Eigen::MatrixXd& rhs) {
+    const double denominator = lhs.norm() * rhs.norm();
+    return denominator > 1e-15
+        ? (lhs.array() * rhs.array()).sum() / denominator
+        : 0.0;
+}
+
 void save_matrix(const std::filesystem::path& path,
                  const Eigen::MatrixXd& matrix) {
     std::ofstream output(path);
@@ -170,11 +178,62 @@ void test_same_control_point_rasterizers(
     }
 }
 
+void test_dirac_shape_derivative() {
+    litho::Polygon controls(8, 2);
+    controls << 30.0, 20.0,
+                20.0, 64.0,
+                30.0, 108.0,
+                64.0, 115.0,
+                100.0, 105.0,
+                112.0, 64.0,
+                100.0, 22.0,
+                64.0, 12.0;
+
+    const Eigen::MatrixXd canvas = Eigen::MatrixXd::Zero(128, 128);
+    const litho::ParametricDemo parametric("BS", canvas, 16, "dirac");
+    constexpr int curve_samples = 200;
+    constexpr int control_index = 2;
+    constexpr double delta = 0.05;
+
+    const litho::RasterDerivativeXY analytic =
+        parametric.render_curve_dirac_derivative(
+            {controls}, 0, control_index, curve_samples);
+    auto central_difference = [&](int coordinate) {
+        litho::Polygon plus = controls;
+        litho::Polygon minus = controls;
+        plus(control_index, coordinate) += delta;
+        minus(control_index, coordinate) -= delta;
+        return (parametric.render_curve_dirac({plus}, curve_samples) -
+                parametric.render_curve_dirac({minus}, curve_samples)) /
+               (2.0 * delta);
+    };
+    // 控制点存储顺序为 (y,x)，解析接口则按优化器的 (x,y) 命名返回。
+    const Eigen::MatrixXd fd_x = central_difference(1);
+    const Eigen::MatrixXd fd_y = central_difference(0);
+    const double cosine_x = cosine_similarity(analytic.dx, fd_x);
+    const double cosine_y = cosine_similarity(analytic.dy, fd_y);
+    const double ratio_x = analytic.dx.norm() / std::max(fd_x.norm(), 1e-15);
+    const double ratio_y = analytic.dy.norm() / std::max(fd_y.norm(), 1e-15);
+
+    std::cout << "Dirac mask derivative comparison\n"
+              << "  central delta       : " << delta << '\n'
+              << "  cosine x / y        : " << cosine_x << " / " << cosine_y << '\n'
+              << "  norm ratio x / y    : " << ratio_x << " / " << ratio_y << '\n';
+    require(analytic.dx.allFinite() && analytic.dy.allFinite(),
+            "Dirac analytic derivatives must be finite");
+    require(cosine_x > 0.80 && cosine_y > 0.80,
+            "Dirac analytic derivatives do not agree with central differences");
+    require(ratio_x > 0.75 && ratio_x < 1.25 &&
+            ratio_y > 0.75 && ratio_y < 1.25,
+            "Dirac analytic derivative magnitude is inconsistent");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
         test_periodic_cubic_b_spline();
+        test_dirac_shape_derivative();
         const std::filesystem::path output_directory =
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
         test_same_control_point_rasterizers(

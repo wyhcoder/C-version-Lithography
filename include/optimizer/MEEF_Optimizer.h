@@ -17,6 +17,10 @@ namespace litho {
         std::string pattern_name;
         std::string ls_mask_path;
         std::string save_file_path;
+        // MEEF 构建方式：finite_difference / analytic。
+        std::string meef_builder = "finite_difference";
+        // EPE 直方图柱宽和横轴刻度间隔，单位 nm。
+        double epe_histogram_bin_width_nm = 0.25;
         std::string move_strategy = "xy";
         int iter = 100;
         double step_tol = 0.0;  // 0 表示关闭位移提前终止
@@ -94,6 +98,21 @@ namespace litho {
             MEEFMatrixXY build_meef_matrix_xy(const ControlPoints& current_cps) const;
             MEEFMatrixXY build_meef_matrix_xy() const {
                 return build_meef_matrix_xy(_main_control_points);
+            }
+
+            // 基于 B 样条形状导数、Dirac mask 导数和 SOCS 切向传播构建矩阵。
+            // 当前解析路径支持 curve_type=BS 且 rasterizer=dirac。
+            MEEFMatrixXY build_meef_matrix_xy_analytic(
+                const ControlPoints& current_cps) const;
+            MEEFMatrixXY build_meef_matrix_xy_analytic() const {
+                return build_meef_matrix_xy_analytic(_main_control_points);
+            }
+
+            // 按 config.meef_builder 选择原中心差分或解析构建方式。
+            MEEFMatrixXY build_meef_matrix_xy_selected(
+                const ControlPoints& current_cps) const;
+            MEEFMatrixXY build_meef_matrix_xy_selected() const {
+                return build_meef_matrix_xy_selected(_main_control_points);
             }
 
 

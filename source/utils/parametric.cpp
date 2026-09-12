@@ -7,6 +7,50 @@
 namespace litho {
 namespace {
 
+int wrapped_index(int index, int count) {
+    return (index % count + count) % count;
+}
+
+double periodic_b_spline_control_influence(
+    int count,
+    int degree,
+    int segment,
+    double t,
+    int control_index) {
+    auto contribution = [&](int index, double weight) {
+        return wrapped_index(index, count) == control_index ? weight : 0.0;
+    };
+
+    if (degree == 1) {
+        return contribution(segment, 1.0 - t) +
+               contribution(segment + 1, t);
+    }
+    if (degree == 2) {
+        const double b0 = 0.5 * (1.0 - t) * (1.0 - t);
+        const double b1 = 0.5 * (-2.0 * t * t + 2.0 * t + 1.0);
+        const double b2 = 0.5 * t * t;
+        return contribution(segment - 1, b0) +
+               contribution(segment, b1) +
+               contribution(segment + 1, b2);
+    }
+
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+    const double b0 = (1.0 - 3.0 * t + 3.0 * t2 - t3) / 6.0;
+    const double b1 = (4.0 - 6.0 * t2 + 3.0 * t3) / 6.0;
+    const double b2 = (1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3) / 6.0;
+    const double b3 = t3 / 6.0;
+    return contribution(segment - 1, b0) +
+           contribution(segment, b1) +
+           contribution(segment + 1, b2) +
+           contribution(segment + 2, b3);
+}
+
+double tent_kernel_value(double r) {
+    const double value = 1.0 - std::abs(r);
+    return value > 0.0 ? value : 0.0;
+}
+
 // 计算闭合周期均匀 B 样条上的一个点；控制点坐标格式为 (y,x)。
 Eigen::Vector2d periodic_b_spline_point(
     const Polygon& controls,
@@ -15,7 +59,7 @@ Eigen::Vector2d periodic_b_spline_point(
     double t) {
     const int count = static_cast<int>(controls.rows());
     const auto point_at = [&](int index) {
-        const int wrapped = (index % count + count) % count;
+        const int wrapped = wrapped_index(index, count);
         return controls.row(wrapped).transpose();
     };
 
@@ -45,6 +89,133 @@ Eigen::Vector2d periodic_b_spline_point(
 }
 
 }  // namespace
+
+RasterDerivativeXY ParametricDemo::render_curve_dirac_derivative(
+    const Polygons& cps,
+    int contour_index,
+    int control_point_index,
+    int num_points,
+    double grid_spacing,
+    double segment_fraction) const
+{
+    if (_curve_type != "BS") {
+        throw std::invalid_argument(
+            "render_curve_dirac_derivative currently supports curve_type=BS only");
+    }
+    if (contour_index < 0 || contour_index >= static_cast<int>(cps.size())) {
+        throw std::out_of_range("render_curve_dirac_derivative: contour index out of range");
+    }
+    const Polygon& controls = cps[contour_index];
+    const int control_count = static_cast<int>(controls.rows());
+    if (control_point_index < 0 || control_point_index >= control_count) {
+        throw std::out_of_range(
+            "render_curve_dirac_derivative: control-point index out of range");
+    }
+    if (control_count < 2 || num_points < 3) {
+        throw std::invalid_argument(
+            "render_curve_dirac_derivative: insufficient controls or curve samples");
+    }
+    if (!std::isfinite(grid_spacing) || grid_spacing <= 0.0 ||
+        !std::isfinite(segment_fraction) || segment_fraction <= 0.0) {
+        throw std::invalid_argument(
+            "render_curve_dirac_derivative: invalid grid spacing or segment fraction");
+    }
+
+    const int height = static_cast<int>(_mask_template.rows());
+    const int width = static_cast<int>(_mask_template.cols());
+    RasterDerivativeXY result{
+        Eigen::MatrixXd::Zero(height, width),
+        Eigen::MatrixXd::Zero(height, width)};
+
+    const Polygons sampled = b_spline({controls}, num_points);
+    const Polygon& curve = sampled.front();
+    const int degree = std::min(3, control_count - 1);
+
+    std::vector<double> influence(num_points, 0.0);
+    for (int sample = 0; sample < num_points; ++sample) {
+        const double global_t =
+            static_cast<double>(sample) / num_points * control_count;
+        const int spline_segment = static_cast<int>(std::floor(global_t));
+        const double local_t = global_t - spline_segment;
+        influence[sample] = periodic_b_spline_control_influence(
+            control_count,
+            degree,
+            spline_segment,
+            local_t,
+            control_point_index);
+    }
+
+    double twice_signed_area = 0.0;
+    for (int sample = 0; sample < num_points; ++sample) {
+        const int next = (sample + 1) % num_points;
+        twice_signed_area +=
+            curve(sample, 1) * curve(next, 0) -
+            curve(next, 1) * curve(sample, 0);
+    }
+    if (std::abs(twice_signed_area) < 1e-12) {
+        throw std::invalid_argument(
+            "render_curve_dirac_derivative: sampled contour area is zero");
+    }
+    const bool counter_clockwise = twice_signed_area > 0.0;
+    const double target_segment_length = segment_fraction * grid_spacing;
+
+    // 形状导数：d chi / d p_(j,alpha)
+    //          = integral_Gamma B_j(u) n_alpha delta_h(x-C(u)) ds。
+    // B_j 是当前控制点对 B 样条曲线点的影响系数；这里只把边界积分
+    // 离散化，不再重新生成 p+delta 和 p-delta 两张 mask。
+    for (int edge = 0; edge < num_points; ++edge) {
+        const int next = (edge + 1) % num_points;
+        const double x0 = curve(edge, 1);
+        const double y0 = curve(edge, 0);
+        const double dx = curve(next, 1) - x0;
+        const double dy = curve(next, 0) - y0;
+        const double edge_length = std::hypot(dx, dy);
+        if (edge_length <= 1e-14) continue;
+
+        const int segment_count = std::max(
+            1,
+            static_cast<int>(std::ceil(edge_length / target_segment_length)));
+        const double segment_length = edge_length / segment_count;
+        const double tangent_x = dx / edge_length;
+        const double tangent_y = dy / edge_length;
+        const double normal_x = counter_clockwise ? tangent_y : -tangent_y;
+        const double normal_y = counter_clockwise ? -tangent_x : tangent_x;
+        const double scale =
+            segment_length / (grid_spacing * grid_spacing);
+
+        for (int segment = 0; segment < segment_count; ++segment) {
+            const double fraction =
+                (static_cast<double>(segment) + 0.5) / segment_count;
+            const double basis =
+                (1.0 - fraction) * influence[edge] +
+                fraction * influence[next];
+            if (std::abs(basis) <= 1e-15) continue;
+
+            const double sample_x = x0 + fraction * dx;
+            const double sample_y = y0 + fraction * dy;
+            const double ux = sample_x / grid_spacing;
+            const double uy = sample_y / grid_spacing;
+            const int ix0 = static_cast<int>(std::floor(ux));
+            const int iy0 = static_cast<int>(std::floor(uy));
+
+            for (int row : {iy0, iy0 + 1}) {
+                if (row < 0 || row >= height) continue;
+                const double wy = tent_kernel_value(uy - row);
+                if (wy == 0.0) continue;
+                for (int col : {ix0, ix0 + 1}) {
+                    if (col < 0 || col >= width) continue;
+                    const double weight = tent_kernel_value(ux - col) * wy;
+                    result.dx(row, col) +=
+                        scale * basis * normal_x * weight;
+                    result.dy(row, col) +=
+                        scale * basis * normal_y * weight;
+                }
+            }
+        }
+    }
+
+    return result;
+}
 
 ParametricDemo::ParametricDemo(const std::string& curve_type,
                                const Eigen::MatrixXd& mask_template,
