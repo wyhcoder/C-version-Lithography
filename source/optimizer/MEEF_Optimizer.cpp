@@ -291,7 +291,10 @@ namespace litho {
                 _config.main_cps_path,
                 static_cast<int>(_target_mask.rows()),
                 static_cast<int>(_target_mask.cols()));
-        } else {
+        }  else if (_config.main_cp_mode == "LSM_interval") {
+            _main_control_points = _extract_mask_control_points(
+                _main_sraf.main_mask, config.main_cp_interval, config.main_symmetry);
+        }else {
             throw std::invalid_argument(
                 "MEEF_Optimizer: unsupported main_cp_mode: " +
                 _config.main_cp_mode);

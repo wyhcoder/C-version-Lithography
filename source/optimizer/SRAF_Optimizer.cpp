@@ -216,8 +216,7 @@ ControlPoints SRAF_Optimizer::load_main_control_points_txt(
 
         Contour contour(static_cast<Eigen::Index>(points.size()), 2);
         for (Eigen::Index row = 0; row < contour.rows(); ++row) {
-            contour.row(row) =
-                points[static_cast<std::size_t>(row)].transpose();
+            contour.row(row) = points[static_cast<std::size_t>(row)].transpose();
         }
         result.push_back(std::move(contour));
     }
@@ -232,6 +231,7 @@ SRAF_Optimizer::SRAF_Optimizer(
     : _simulator(simulator),
       _cache(cache),
       _sraf_config(config) {
+    // 初始化内容检测
     if (_sraf_config.ls_mask_path.empty()) {
         throw std::invalid_argument(
             "SRAF_Optimizer: ls_mask_path must not be empty");
@@ -313,12 +313,12 @@ SRAF_Optimizer::SRAF_Optimizer(
 
     // 保存过滤后的初始化结果，并为后续 EPE 与宽度优化准备数据。
     validate_geometry_result();
-    save_main_control_points();
-    save_control_points();
-    EpSelect ep_select(_target_mask, _sraf_config.mid_weight, _sraf_config.other_weight);
+    save_main_control_points(); // 保存主图形控制点坐标
+    save_control_points(); // 保存SRAF骨架线控制点坐标
+    EpSelect ep_select(_target_mask, _sraf_config.mid_weight, _sraf_config.other_weight); // 选择ep点
     _eps_result = ep_select.select_eps_others(_sraf_config.interval_line, _sraf_config.interval_corner);
-    render_initial_masks();
-    save_initial_masks();
+    render_initial_masks(); // 渲染初始掩模
+    save_initial_masks(); // 保存最初宽度初始化后的掩模
 }
 
 // 删除不能表示为单条参数曲线的 SRAF component，并重建保留骨架的并集。
@@ -373,12 +373,12 @@ void SRAF_Optimizer::validate_geometry_result() const {
     }
 }
 
-// 将每根 SRAF 的 B 样条控制点按 (x,y) 顺序保存到 TXT。
+// 将每根 SRAF 的 B 样条控制点按 (y,x) 顺序保存到 TXT。
 void SRAF_Optimizer::save_control_points() const {
     namespace fs = std::filesystem;
     const fs::path output_dir(_sraf_config.save_file_path);
     fs::create_directories(output_dir);
-    const fs::path output_path = output_dir / "sraf_control_points_xy.txt";
+    const fs::path output_path = output_dir / "sraf_control_points_yx.txt";
 
     std::ofstream output(output_path);
     if (!output) {
@@ -388,7 +388,7 @@ void SRAF_Optimizer::save_control_points() const {
     }
 
     output << "# SRAF control points\n"
-           << "# coordinate_order=x y\n"
+           << "# coordinate_order=y x\n"
            << "# component_count=" << _sraf_geometry_result.centerlines.size()
            << " total_control_points=" << _control_point_count << '\n'
            << std::fixed << std::setprecision(6);
@@ -397,7 +397,7 @@ void SRAF_Optimizer::save_control_points() const {
                << " closed=" << (centerline.path.closed ? 1 : 0)
                << " count=" << centerline.control_points.size() << '\n';
         for (const auto& point : centerline.control_points) {
-            output << point.x << ' ' << point.y << '\n';
+            output << point.y << ' ' << point.x << '\n';
         }
     }
     if (!output) {
@@ -568,7 +568,7 @@ void SRAF_Optimizer::optimize() {
     // 构造时已经预计算不同离焦量的 SOCS cache。
     PvbandComputer pvBandCompute(_simulator, _sraf_config.dose_margin, _sraf_config.defocus_range, _sraf_config.defocus_step, _sraf_config.mode);
 
-    // 对完整 mask 统一计算 EPE、加权 EPE、PE 和 PV Band。
+    // 对完整 mask 统一计算 EPE、加权 EPE、PE 和 PV Band 匿名函数。
     auto evaluate = [&](const Eigen::MatrixXd& mask) {
         EvaluateState state;
         state.mask = mask;

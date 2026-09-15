@@ -1,0 +1,10 @@
+import { FileBlob, PresentationFile } from "@oai/artifact-tool";
+const source = "/Users/wangyuhang/.codex/plugins/cache/openai-curated-remote/openai-templates/0.1.1/skills/artifact-template-simple-light-mode/assets/reference.pptx";
+const p = await PresentationFile.importPptx(await FileBlob.load(source));
+const keepIdx = [0, 4, 7, 10, 16, 18, 25];
+const keep = keepIdx.map(i => p.slides.getItem(i));
+for (let i = p.slides.count - 1; i >= 0; --i) if (!keepIdx.includes(i)) p.slides.remove(i);
+console.log("after delete", p.slides.items.map(s => s.id));
+keep[4].moveTo(2);
+console.log("after moveTo2", p.slides.items.map(s => s.id));
+console.log("expected moved id", keep[4].id);

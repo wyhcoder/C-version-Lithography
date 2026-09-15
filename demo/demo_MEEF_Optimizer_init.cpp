@@ -192,10 +192,10 @@ int main(int argc, char** argv) {
         if (!fs::is_regular_file(target_path)) {
             throw std::runtime_error("YAML 指定的 target 不存在: " + target_path.string());
         }
-        if (main_cp_mode != "target_interval" && main_cp_mode != "npy") {
-            throw std::invalid_argument(
-                "meef.main_cp_mode 仅支持 target_interval / npy");
-        }
+        // if (main_cp_mode != "target_interval" && main_cp_mode != "npy") {
+        //     throw std::invalid_argument(
+        //         "meef.main_cp_mode 仅支持 target_interval / npy");
+        // }
         fs::path main_cps_npy_path;
         if (main_cp_mode == "npy") {
             if (main_cps_config_path.empty()) {

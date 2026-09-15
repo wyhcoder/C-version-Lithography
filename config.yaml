@@ -46,7 +46,7 @@ meef:
   patience: 3
 
   # 主图形控制点
-  main_cp_mode: "target_interval"  # target_interval / npy
+  main_cp_mode: "target_interval"  # target_interval / npy / LSM_interval
   main_cps_npy_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/CPS/工字型0.8.npy"
   main_cp_interval: 7
   main_symmetry: "none"            # none / center / left-right / diagonal
@@ -54,7 +54,7 @@ meef:
   # 固定 SRAF
   sraf_mask_mode: "lsm"            # lsm / fitted_txt
   fitted_sraf_txt_path: "/Users/wangyuhang/Deskstop/school/Litho_Simulation_cpu/outputs/opc/DPS/DPS_data/LSmask/工字型BS0.8.txt"
-  sraf_cp_interval: 5
+  sraf_cp_interval: 7
   sraf_min_cps: 8
   sraf_min_aera: 50                # 字段名沿用现有拼写
 
@@ -76,7 +76,7 @@ sraf_optimizer:
   paths:
     lsm_mask_path: "result/LSM_result/LSM_mask.txt"
     main_control_points_path: "result/MEEF_result/test/best_wepe/control_points.txt"
-    output_dir: "outputs/sraf_optimizer_init"
+    output_dir: "result/SRAF_result"
 
   # 从 LSM mask 中分离 SRAF、提取骨架并采样控制点。
   geometry:
@@ -109,7 +109,7 @@ sraf_optimizer:
       mode: "full"                  # dose_only / defocus_only / full
 
   width_optimization:
-    mode: "independent"             # shared / independent
+    mode: "shared"             # shared / independent
     shared:
       min_half_width: 1.0
       max_half_width: 4.0

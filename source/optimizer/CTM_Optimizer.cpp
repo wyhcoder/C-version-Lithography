@@ -63,6 +63,7 @@ Eigen::MatrixXd CTM_Optimizer::optimize(bool verbose, bool save_intermediate) {
         // ② 用当前电场求梯度 Gm = ∂PE/∂mask
         _Gm = _gradient.pe_gradient(_imaging_result.wafer_image, _target_image,
                                     _imaging.get_electric_field());
+
         if (save_intermediate) {
             SaveTxt::save_mat(_Gm, "Gm_CTM.txt");
         }
