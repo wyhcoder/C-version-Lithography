@@ -25,6 +25,9 @@ phi_t + Vn * |grad(phi)| = 0
 - [`source/optimizer/LSM_Optimizer.cpp`](../source/optimizer/LSM_Optimizer.cpp)
 - [`tests/test_level_set_godunov.cpp`](../tests/test_level_set_godunov.cpp)
 
+整数数组下标与公式中 `i+1/2` 半网格位置的详细对应关系，参见
+[`WENO_INTEGER_GRID_RECONSTRUCTION.md`](WENO_INTEGER_GRID_RECONSTRUCTION.md)。
+
 ## 2. 为什么使用 WENO5
 
 Level Set 法向演化属于 Hamilton-Jacobi 型问题，信息具有明确的传播方向。

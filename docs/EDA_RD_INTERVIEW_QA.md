@@ -236,7 +236,7 @@ My(i,j) = ∂EPE_i / ∂y_j
 
 **参考回答：**
 
-计算每轮控制点位移的最大模长 `|d|max`。当它连续 `patience` 轮小于 `step_tol` 时停止。连续多轮判定可以避免单轮偶然小步长导致误停。但还应同时观察目标函数改善量和约束违例。
+`stop_mode: fixed_iterations` 时跑满 `iter`；`stop_mode: small_step` 时计算每轮最大控制点位移 `|d|max = max sqrt(dx²+dy²)`，连续 `patience` 轮小于 `step_tol` 则提前停止。连续多轮判定可以避免单轮偶然小步长导致误停，但还应同时观察目标函数改善量和约束违例。
 
 ### Q28：为什么“EPE 下降”不一定等于 OPC 更好？
 

@@ -1505,6 +1505,10 @@ namespace litho {
                   << "==================== MEEF Optimization ====================\n"
                   << "  Output directory : " << _config.save_file_path << '\n'
                   << "  Move strategy    : " << _config.move_strategy << '\n'
+                  << "  Matrix update    : " << _config.meef_matrix_update_mode << '\n'
+                  << "  Rebuild interval : " << _config.meef_rebuild_interval << '\n'
+                  << "  Stop mode        : " << _config.stop_mode << '\n'
+                  << "  Step tolerance   : " << _config.step_tol << " pixel\n"
                   << "  Max iterations   : " << _config.iter << '\n'
                   << "===========================================================\n";
 
@@ -1643,6 +1647,25 @@ namespace litho {
         int below_tol_count = 0;
         int actual_iterations = 0;
 
+        if (_config.stop_mode != "fixed_iterations" && _config.stop_mode != "small_step") {
+            throw std::invalid_argument("MEEF_Optimizer::optimize: invalid stop_mode");
+        }
+        if (_config.stop_mode == "small_step" && (!std::isfinite(_config.step_tol) || _config.step_tol <= 0.0)) {
+            throw std::invalid_argument("MEEF_Optimizer::optimize: small_step requires positive finite step_tol");
+        }
+        if (_config.patience <= 0) throw std::invalid_argument("MEEF_Optimizer::optimize: patience must be positive");
+
+        const bool rebuild_every_iteration = _config.meef_matrix_update_mode == "every_iteration";
+        const bool periodic_mode = _config.meef_matrix_update_mode == "periodic";
+        const bool initial_only_mode = _config.meef_matrix_update_mode == "initial_only";
+        const bool valid_update_mode = rebuild_every_iteration || periodic_mode || initial_only_mode;
+        if (!valid_update_mode) {
+            throw std::invalid_argument("MEEF_Optimizer::optimize: invalid meef_matrix_update_mode");
+        }
+        if (_config.meef_rebuild_interval <= 0) throw std::invalid_argument("MEEF rebuild interval must be positive");
+        MEEFMatrixXY cached_meef_matrix;
+        bool has_cached_meef = false;
+
         // 3. 迭代构建 MEEF 矩阵并更新控制点。
         for (int iteration = 1; iteration <= _config.iter; ++iteration) {
             const auto iteration_start = std::chrono::steady_clock::now();
@@ -1654,9 +1677,15 @@ namespace litho {
                     "MEEF_Optimizer::optimize currently supports move_strategy=xy only");
             }
 
-            // 根据当前控制点构建 x、y 方向的 MEEF 矩阵。
-            MEEFMatrixXY meef_matrix =
-                build_meef_matrix_xy_selected(current_cps);
+            // 缓存未加权矩阵：every_iteration 每轮更新，periodic 按间隔更新，initial_only 始终复用。
+            const bool periodic_rebuild = periodic_mode && (iteration - 1) % _config.meef_rebuild_interval == 0;
+            const bool should_rebuild_meef = !has_cached_meef || rebuild_every_iteration || periodic_rebuild;
+            if (should_rebuild_meef) {
+                cached_meef_matrix = build_meef_matrix_xy_selected(current_cps);
+                has_cached_meef = true;
+            }
+            std::cout << "  MEEF matrix       | " << (should_rebuild_meef ? "rebuilt" : "reused") << '\n';
+            MEEFMatrixXY meef_matrix = cached_meef_matrix;
 
             // 匿名函数（Lambda）：按 EP 权重筛选并缩放 MEEF 矩阵。
             auto apply_meef_weight = [&](Eigen::MatrixXd& matrix) {
@@ -1684,16 +1713,20 @@ namespace litho {
 
             // 使用 SVD 求解每个控制点的 x、y 位移。
             const Eigen::RowVectorXd e0 = current.epe_vector;
-            const double lambda_x = _find_truelambadas(meef_matrix.mx, e0);
+            double lambda_x = 0;
+            // const double lambda_x = _find_truelambadas(meef_matrix.mx, e0);
             Eigen::VectorXd delta_x = _SVD_get_delta(
                 meef_matrix.mx, e0, lambda_x);
-            const double lambda_y = _find_truelambadas(meef_matrix.my, e0);
+            // const double lambda_y = _find_truelambadas(meef_matrix.my, e0);
+
+            double lambda_y = 0;
             Eigen::VectorXd delta_y = _SVD_get_delta(
                 meef_matrix.my, e0, lambda_y);
             delta_x = (delta_x.array() * 1e6).round() / 1e6;
             delta_y = (delta_y.array() * 1e6).round() / 1e6;
             Eigen::VectorXd delta_d =
                 (delta_x.array().square() + delta_y.array().square()).sqrt();
+            const double step_max = delta_d.size() > 0 ? delta_d.maxCoeff() : 0.0;
             delta_d = (delta_d.array() * 1e6).round() / 1e6;
 
             // 更新控制点，重新渲染掩模并评估新状态。
@@ -1741,8 +1774,6 @@ namespace litho {
             _main_control_points = current_cps;
             actual_iterations = iteration;
 
-            const double step_max =
-                delta_d.size() > 0 ? delta_d.cwiseAbs().maxCoeff() : 0.0;
             const double iter_seconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - iteration_start).count();
 
@@ -1770,13 +1801,13 @@ namespace litho {
                 std::cout << line.str() << '\n';
             }
 
-            // 连续若干轮位移小于阈值时提前停止。
-            if (_config.step_tol > 0.0) {
+            // fixed_iterations 忽略位移阈值；small_step 在连续 patience 轮满足阈值后提前停止。
+            if (_config.stop_mode == "small_step") {
                 if (step_max < _config.step_tol) {
                     ++below_tol_count;
-                    if (below_tol_count >= std::max(1, _config.patience)) {
+                    if (below_tol_count >= _config.patience) {
                         std::cout << "  Status             | converged: |d|max < "
-                                  << _config.step_tol << " for "
+                                  << _config.step_tol << " pixel for "
                                   << below_tol_count << " iteration(s)\n";
                         break;
                     }

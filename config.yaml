@@ -39,11 +39,14 @@ meef:
   # 迭代
   # finite_difference：保留原中心差分；analytic：需配合 BS + dirac
   meef_builder: "analytic"
+  meef_matrix_update_mode: "periodic" # every_iteration / periodic / initial_only
+  meef_rebuild_interval: 5             # periodic 模式：第 1、4、7... 轮重建
   epe_histogram_bin_width_nm: 0.25 # 可选 0.25 / 0.5 / 1.0 nm
   move_strategy: "xy"
   iter: 30
-  step_tol: 0.0                    # 0 表示关闭位移提前终止
-  patience: 3
+  stop_mode: "small_step"    # fixed_iterations / small_step
+  step_tol: 0.02                    # small_step: max sqrt(dx^2 + dy^2) < 0.02 pixel
+  patience: 2                     # small_step: 连续满足的轮数；设为 1 即首次满足就退出
 
   # 主图形控制点
   main_cp_mode: "target_interval"  # target_interval / npy / LSM_interval

@@ -281,6 +281,15 @@ int main(int argc, char** argv) {
         meef_config.save_file_path = save_path.string();
         meef_config.meef_builder = yaml_optional<std::string>(
             meef_yaml, "meef_builder", "finite_difference");
+        meef_config.meef_matrix_update_mode = yaml_optional<std::string>(meef_yaml, "meef_matrix_update_mode", "every_iteration");
+        const bool valid_update_mode = meef_config.meef_matrix_update_mode == "every_iteration" ||
+                                       meef_config.meef_matrix_update_mode == "periodic" ||
+                                       meef_config.meef_matrix_update_mode == "initial_only";
+        if (!valid_update_mode) {
+            throw std::invalid_argument("meef.meef_matrix_update_mode 仅支持 every_iteration / periodic / initial_only");
+        }
+        meef_config.meef_rebuild_interval = yaml_optional<int>(meef_yaml, "meef_rebuild_interval", 1);
+        if (meef_config.meef_rebuild_interval <= 0) throw std::invalid_argument("meef.meef_rebuild_interval 必须为正整数");
         meef_config.epe_histogram_bin_width_nm = yaml_optional<double>(
             meef_yaml, "epe_histogram_bin_width_nm", 0.25);
         if (!std::isfinite(meef_config.epe_histogram_bin_width_nm) ||
@@ -290,8 +299,17 @@ int main(int argc, char** argv) {
         }
         meef_config.move_strategy = yaml_required<std::string>(meef_yaml, "move_strategy");
         meef_config.iter = yaml_required<int>(meef_yaml, "iter");
-        meef_config.step_tol = yaml_required<double>(meef_yaml, "step_tol");
+        meef_config.stop_mode = yaml_optional<std::string>(meef_yaml, "stop_mode", "fixed_iterations");
+        if (meef_config.stop_mode != "fixed_iterations" && meef_config.stop_mode != "small_step") {
+            throw std::invalid_argument("meef.stop_mode 仅支持 fixed_iterations / small_step");
+        }
+        meef_config.step_tol = yaml_optional<double>(meef_yaml, "step_tol", 0.02);
         meef_config.patience = yaml_required<int>(meef_yaml, "patience");
+        if (meef_config.iter <= 0) throw std::invalid_argument("meef.iter 必须为正整数");
+        if (meef_config.patience <= 0) throw std::invalid_argument("meef.patience 必须为正整数");
+        if (meef_config.stop_mode == "small_step" && (!std::isfinite(meef_config.step_tol) || meef_config.step_tol <= 0.0)) {
+            throw std::invalid_argument("small_step 模式下 meef.step_tol 必须为有限正数 (pixel)");
+        }
 
         meef_config.main_cp_mode =
             (main_cp_mode == "npy") ? "file" : "target_interval";
@@ -353,6 +371,10 @@ int main(int argc, char** argv) {
                   << '\n'
                   << "Curve rasterizer: " << meef_config.rasterizer << '\n'
                   << "MEEF builder: " << meef_config.meef_builder << '\n'
+                  << "MEEF matrix update: " << meef_config.meef_matrix_update_mode << '\n'
+                  << "MEEF rebuild interval: " << meef_config.meef_rebuild_interval << '\n'
+                  << "MEEF stop mode: " << meef_config.stop_mode << '\n'
+                  << "MEEF step tolerance: " << meef_config.step_tol << " pixel\n"
                   << "EPE histogram bin width: "
                   << meef_config.epe_histogram_bin_width_nm << " nm\n";
 

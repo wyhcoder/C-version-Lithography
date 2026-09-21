@@ -32,11 +32,11 @@ Grid::Grid(int row_mask_size, double pixel_size_nm, double NA, double wavelength
     // 频率轴
 
     _norm_pitch = _pitch * NA / wavelength;
-    double specimen = 1 / _norm_pitch;
+    double normalized_frequency_step = 1 / _norm_pitch;
 
     // 这个是已经归一化的频率轴
-    _grid_coords.Fx_1d = (Eigen::VectorXd::LinSpaced(N, -(N-1)/2, (N-1)/2)).array() * specimen ;
-    _grid_coords.Fy_1d = (Eigen::VectorXd::LinSpaced(N, -(N-1)/2, (N-1)/2)).array() * specimen ;
+    _grid_coords.Fx_1d = (Eigen::VectorXd::LinSpaced(N, -(N-1)/2, (N-1)/2)).array() * normalized_frequency_step ;
+    _grid_coords.Fy_1d = (Eigen::VectorXd::LinSpaced(N, -(N-1)/2, (N-1)/2)).array() * normalized_frequency_step ;
 
 
     // _grid_coords.Fx_1d = fftF();

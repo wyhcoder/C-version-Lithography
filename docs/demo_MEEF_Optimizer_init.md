@@ -125,8 +125,9 @@ meef:
 | `interval_corner`  | 2      | 拐角 EP 间隔                 |
 | `mid_weight`       | 4.0    | 中点 EP 权重                 |
 | `other_weight`     | 1.0    | 其他 EP 权重                 |
-| `step_tol`         | 0.0    | 步长收敛阈值（0=不判断）     |
-| `patience`         | 3      | 早停耐心值                   |
+| `stop_mode`        | fixed_iterations | 跑满 `iter`；`small_step` 可按最大控制点位移提前停止 |
+| `step_tol`         | 0.02   | `small_step` 的位移阈值，单位 pixel |
+| `patience`         | 3      | `small_step` 需连续满足阈值的轮数 |
 
 `main_cp_mode: npy` 支持 Python 版 `np.save(..., dtype=object)` 产生的不等长多轮廓；
 demo 会用项目 `.venv/bin/python`（不存在时用 `python3`）将其转换为输出目录中的

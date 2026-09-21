@@ -19,11 +19,17 @@ namespace litho {
         std::string save_file_path;
         // MEEF 构建方式：finite_difference / analytic。
         std::string meef_builder = "finite_difference";
+        // MEEF 矩阵更新方式：every_iteration / periodic / initial_only。
+        std::string meef_matrix_update_mode = "every_iteration";
+        // periodic 模式下，每执行这么多轮控制点更新后重建矩阵。
+        int meef_rebuild_interval = 1;
         // EPE 直方图柱宽和横轴刻度间隔，单位 nm。
         double epe_histogram_bin_width_nm = 0.25;
         std::string move_strategy = "xy";
         int iter = 100;
-        double step_tol = 0.0;  // 0 表示关闭位移提前终止
+        // fixed_iterations 跑满 iter；small_step 在控制点最大位移小于 step_tol 时提前退出。
+        std::string stop_mode = "fixed_iterations";
+        double step_tol = 0.02;  // small_step 模式的最大位移阈值，单位 pixel
         int patience = 3;
         // 主图形控制点来源：target_interval / file。
         // file 模式读取由 demo 预先从 .npy 转换得到的文本文件，坐标顺序为 y x。
