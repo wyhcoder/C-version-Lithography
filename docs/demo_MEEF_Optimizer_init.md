@@ -13,66 +13,38 @@ cmake --build build-release --target demo_MEEF_Optimizer_init -j
 
 产物：`build-release/demo_MEEF_Optimizer_init`
 
-## 2. 命令行参数
+## 2. 运行方式
 
-程序采用**位置参数**解析，顺序固定：
+运行参数均从 YAML 的 `meef:` 节读取。先在 `config.yaml` 中设置 `run_mode`、
+`iter`、`output_dir` 和 EP 权重，再从 `build-release` 目录执行：
 
+```bash
+cd build-release
+./demo_MEEF_Optimizer_init ../config.yaml
 ```
-./demo_MEEF_Optimizer_init [config] [lsm_mask] [save_path] [mode] [iter] [--wepe-only]
-```
 
-
-| 位置    | 参数        | 默认值                               | 说明                                  |
-| ------- | ----------- | ------------------------------------ | ------------------------------------- |
-| argv[1] | config      | `config.yaml`                        | 仿真参数 YAML                         |
-| argv[2] | lsm_mask    | `assets/lsm_mask/ls_image工字型.txt` | 初始 LSM 掩模                         |
-| argv[3] | save_path   | `result/MEEF_result/test`            | 输出目录                              |
-| argv[4] | mode        | `--init-only`                        | 运行模式（见下）                      |
-| argv[5] | iter        | `100`                                | 优化迭代次数（仅`--optimize` 生效）   |
-| argv[6] | --wepe-only | （不启用）                           | WEPE-only 开关（仅`--optimize` 生效） |
-
-> ⚠️ 因为是位置参数，`mode` 必须出现在第 4 个位置。不能跳过前三个参数直接传 `--optimize`，否则 `--optimize` 会被当成 `config` 路径，报「配置文件不存在」。
+省略路径时读取 `build-release/config.yaml`；修改根目录的 YAML 后需重新运行
+`cmake -S . -B build-release` 刷新该副本。命令行只接受一个可选的 YAML 路径。
 
 ## 3. 三种运行模式
 
-### 3.1 `--init-only`（默认）
+### 3.1 `run_mode: "--init-only"`
 
 只构造 `MEEF_Optimizer`，测试初始化是否正常，不跑光刻仿真。会输出 `main_cps.txt` / `sraf_cps.txt` / `eps.txt` / `sraf_mask.txt` / `main_mask.txt` 并校验文件完整性。
 
-```bash
-./build-release/demo_MEEF_Optimizer_init
-# 或显式指定前三个参数
-./build-release/demo_MEEF_Optimizer_init config.yaml assets/lsm_mask/ls_image工字型.txt result/MEEF_result/test
-```
-
-### 3.2 `--build-meef`
+### 3.2 `run_mode: "--build-meef"`
 
 构建 X/Y 方向 MEEF 矩阵（每个控制点扰动 ±delta 共 4 次光刻仿真，OpenMP 并行），保存为 `meef_mx.txt` / `meef_my.txt`，并打印矩阵尺寸与范数。
 
-```bash
-./build-release/demo_MEEF_Optimizer_init config.yaml assets/lsm_mask/ls_image工字型.txt result/MEEF_result/test --build-meef
-```
+### 3.3 `run_mode: "--optimize"`
 
-### 3.3 `--optimize [iter] [--wepe-only]`
+执行完整 MEEF 优化流程，最多迭代 YAML 中 `iter` 指定的次数。结束后自动保存参数化曲线图和 EP 选点图，并尝试打开四图对比窗口。
 
-执行完整 MEEF 优化流程：构建 MEEF 矩阵 → 截断 SVD 求解 → 更新控制点 → 渲染评估，循环 `iter` 次。优化结束后自动调用 `scripts/show_multi.py` 弹出 4 联图窗口。
-
-```bash
-# 全 EP 点优化，50 次迭代
-./build-release/demo_MEEF_Optimizer_init config.yaml assets/lsm_mask/ls_image工字型.txt result/MEEF_result/test --optimize 50
-
-# WEPE-only 优化，50 次迭代
-./build-release/demo_MEEF_Optimizer_init config.yaml assets/lsm_mask/ls_image工字型.txt result/MEEF_result/test --optimize 50 --wepe-only
-./demo_MEEF_Optimizer_init ../config.yaml ../assets/lsm_mask/ls_image工字型.txt ../result/MEEF_result/test --optimize 50 --wepe-only
-```
-
-两种 EP 模式的区别（对应 `MEEFPipelineConfig.optimize_wepe_only`）：
-
-
-| 模式             | MEEF 矩阵列来源  | 说明                       |
-| ---------------- | ---------------- | -------------------------- |
-| 全 EP 点（默认） | 所有 edge points | 覆盖完整轮廓               |
-| `--wepe-only`    | 仅 WEPE 关键点   | 只在加权关键点上优化，更快 |
+`optimize_wepe_only: false` 时，MEEF 矩阵的所有 EP 行都参与求解，并乘各自的
+`weight_meef`。设为 `true` 时，矩阵行还会乘 `weight_epe`。`wepe_all_eps: true`
+会把全部已选 EP 的 `weight_epe` 设为 1，因此全部 EP 都计入 WEPE、图上全部为红色；
+此时 WEPE 总和等于 EPE 总和。`mid_weight` 和 `other_weight` 控制的是另一组
+`weight_meef`，不会被 `wepe_all_eps` 改动。
 
 ## 4. YAML 配置
 
@@ -108,31 +80,34 @@ meef:
 | `console_log_name` | console_output.log | 终端输出日志名称       |
 | `pattern_name`     | 工字型 | 图案名                       |
 | `move_strategy`    | xy     | X/Y 双向扰动                 |
-| `main_cp_mode`     | target_interval | 从目标间隔取点；也可设为 `npy` |
+| `main_cp_mode`     | target_interval | `target_interval` 从目标轮廓取点；`lsm_interval` 从 LSM 主图形轮廓取点；`npy` 导入控制点 |
 | `main_cps_npy_path` | 空    | `npy` 模式的控制点文件，点为 `(y,x)` |
-| `main_cp_interval` | 7      | 主图形控制点采样间隔（像素） |
+| `main_cp_interval` | 7      | 两种 interval 模式每取一点后跳过的轮廓点数；0 表示逐点选取 |
 | `main_symmetry`    | none   | 不使用对称                   |
 | `sraf_mask_mode`   | lsm    | 从原 LSM 提取；也可设为 `fitted_txt` |
 | `fitted_sraf_txt_path` | 空 | 拟合后的完整 mask 或 SRAF-only 文本 |
-| `sraf_cp_interval` | 5      | SRAF 控制点间隔              |
+| `sraf_cp_interval` | 5      | SRAF 控制点间隔，单位为原图像素；外边界和孔洞边界均采样 |
 | `sraf_min_cps`     | 8      | SRAF 最少控制点数            |
 | `sraf_min_aera`    | 50     | SRAF 最小连通面积            |
 | `msaa_level`       | 16     | MSAA 采样数                  |
-| `curve_type`       | BS     | B-Spline 插值                |
+| `curve_type`       | BS     | 主图形周期 B 样条，输入点为控制点 |
+| `sraf_curve_type`  | 同 `curve_type` | 固定 SRAF 单独选择 `BS`、`OA` 或 `CR`；`CR` 为经过输入点的周期向心 Catmull-Rom |
 | `delta`            | 0.15   | 中心差分步长                 |
 | `dilate_radius`    | 2      | 主/SRAF 分离膨胀半径         |
 | `interval_line`    | 5      | 直线段 EP 间隔               |
 | `interval_corner`  | 2      | 拐角 EP 间隔                 |
 | `mid_weight`       | 4.0    | 中点 EP 权重                 |
 | `other_weight`     | 1.0    | 其他 EP 权重                 |
+| `wepe_all_eps`     | false  | `true` 时所有已选 EP 的 `weight_epe=1`，全部计入 WEPE |
+| `optimize_wepe_only` | false | `true` 时 MEEF 矩阵行额外乘 `weight_epe` |
 | `stop_mode`        | fixed_iterations | 跑满 `iter`；`small_step` 可按最大控制点位移提前停止 |
 | `step_tol`         | 0.02   | `small_step` 的位移阈值，单位 pixel |
 | `patience`         | 3      | `small_step` 需连续满足阈值的轮数 |
 
 `main_cp_mode: npy` 支持 Python 版 `np.save(..., dtype=object)` 产生的不等长多轮廓；
 demo 会用项目 `.venv/bin/python`（不存在时用 `python3`）将其转换为输出目录中的
-`imported_main_cps.txt`，随后由 C++ 校验边界并读取。`sraf_mask_mode: fitted_txt`
-会相对 target 分离出 SRAF，并把该灰度 mask 原样固定用于每次 MEEF 扰动。
+`imported_main_cps.txt`，随后由 C++ 校验边界并读取。`sraf_mask_mode: lsm`
+会从 LSM 分离出 SRAF，`fitted_txt` 会从拟合文件中分离出 SRAF。`lsm` 配合 `rasterizer: msaa` 时提取 SRAF 的外边界和孔洞边界控制点，按 `sraf_curve_type` 生成曲线并以奇偶规则渲染，在 MEEF 迭代中固定渲染结果。`OA` 是折线，`CR` 是周期向心 Catmull-Rom 插值曲线；两者都经过输入点，`CR` 在点间可能改变细 SRAF 的宽度，需检查空中像是否超过显影阈值。`fitted_txt` 或 `rasterizer: dirac` 则固定使用分离后的原始 SRAF 灰度 mask。
 
 修改根目录 `config.yaml` 后，需要重新执行 CMake 配置以刷新 build 目录副本；
 也可以运行 demo 时显式传入根目录配置文件路径。
@@ -148,45 +123,57 @@ demo 会用项目 `.venv/bin/python`（不存在时用 `python3`）将其转换�
 | `imported_main_cps.txt`| NPY 导入       | `.npy` 的可审计转换结果   |
 | `sraf_cps.txt`         | 全部           | SRAF 控制点               |
 | `eps.txt`              | 全部           | edge points               |
-| `sraf_mask.txt`        | 全部           | 分离出的 SRAF 掩模        |
-| `main_mask.txt`        | 全部           | 分离出的主图形掩模        |
+| `eps_weights.txt`      | 全部           | 与 `eps.txt` 逐行对应的 EPE/MEEF 权重 |
+| `sraf_mask.txt`        | 全部           | 实际用于优化的固定 SRAF 掩模 |
+| `main_mask.txt`        | 全部           | 参数化重建的主图形掩模   |
 | `meef_mx.txt`          | `--build-meef` | X 方向 MEEF 矩阵          |
 | `meef_my.txt`          | `--build-meef` | Y 方向 MEEF 矩阵          |
 | `lsm_mask.txt`         | `--optimize`   | 初始 LSM 掩模（用于对比） |
 | `lsm_wafer.txt`        | `--optimize`   | 初始 LSM 成像结果         |
+| `initial_mask.txt`、`initial_aerial.txt`、`initial_wafer.txt` | `--optimize` | 参数化初始状态的掩模、空中像和显影图 |
 | `iterations/mask.txt`  | `--optimize`   | 优化后掩模（每轮覆盖）    |
 | `iterations/wafer.txt` | `--optimize`   | 优化后成像（每轮覆盖）    |
-| `best/`                | `--optimize`   | 最优结果快照              |
+| `best_wepe/`、`best_epe/` | `--optimize` | 两种最优结果快照 |
 | `errors.csv`           | `--optimize`   | 每轮 EPE/WEPE 历史        |
-| `meta.json`            | 全部           | 元信息                    |
+| `best_wepe_parametric_curves.png` | `--optimize` | 最优 WEPE 参数化曲线、控制点和目标轮廓 |
+| `best_epe_parametric_curves.png` | `--optimize` | 最优 EPE 参数化曲线、控制点和目标轮廓 |
+| `ep_selection.png`     | `--optimize`   | 目标版图上的 EP 选点，区分计入和未计入 WEPE 的点 |
 | `console_output.log`   | 全部           | 本次运行的终端输出副本    |
 
-> `--optimize` 模式下每轮迭代会**覆盖** `iterations/`，不保留中间轮次；最优结果单独存 `best/`。
+> `--optimize` 模式下每轮迭代会**覆盖** `iterations/`，不保留中间轮次；最优结果分别存入 `best_wepe/` 和 `best_epe/`。
+> 日志中的 `SRAF exposure` 统计固定 SRAF 掩模覆盖的非目标区域内，空中像达到显影阈值的像素数和最大强度。
 
 ## 6. 优化后可视化
 
-`--optimize` 模式结束时会自动执行（`demo_MEEF_Optimizer_init.cpp:179`）：
+`--optimize` 保存最优结果后，会自动运行 `scripts/plot_meef_parametric_curves.py --best both`，
+生成两张参数化曲线图和 `ep_selection.png`。EP 图以 target 为底图，红色为
+`weight_epe=1`、计入 WEPE 的点，蓝色为未计入 WEPE 的点；设置 `wepe_all_eps: true`
+后所有 EP 都显示为红色。坐标按文件中的 `(y,x)` 绘为图上的 `(x,y)`。
+脚本当前支持 `curve_type: BS`，优先使用项目 `.venv/bin/python`；绘图失败会打印 warning，
+已保存的数值结果仍保留。
+
+随后 demo 会尝试打开四图对比窗口，关闭窗口后退出：
 
 ```bash
 python3 scripts/show_multi.py \
     <save_path>/lsm_mask.txt gray \
-    <save_path>/lsm_wafer.txt seismic \
+    <save_path>/lsm_wafer.txt gray \
     <save_path>/iterations/mask.txt gray \
-    <save_path>/iterations/wafer.txt seismic \
-    --title_prefix 'LSM vs Optimized'
+    <save_path>/iterations/wafer.txt gray \
+    --titles 'LSM Baseline Mask|LSM Baseline Wafer|MEEF Optimized Mask|MEEF Optimized Wafer'
 ```
 
 在同一个 matplotlib 窗口显示 4 张图：LSM mask / LSM wafer / 优化后 mask / 优化后 wafer。关闭窗口后 demo 退出。
 
-依赖：`python3` + `matplotlib` + `numpy`。若脚本退出状态异常，demo 会打印 warning 但不中断。
+依赖：`matplotlib` + `numpy`。若四图窗口脚本退出状态异常，demo 会打印 warning 但不中断。
 
 ## 7. 常见问题
 
-**Q: 只传 `--optimize 50 --wepe-only` 不带前三个参数行吗？**
-不行。`--optimize` 会被当成 `config` 路径，报「配置文件不存在: --optimize」。必须按位置补齐前三个参数（或省略全部走默认）。
+**Q: 如何让全部 EP 都计入 WEPE？**
+在 YAML 的 `meef:` 节设置 `wepe_all_eps: true`。此时 `eps_weights.txt` 的第一列全为 1，EP 图全部显示红色。
 
 **Q: `--build-meef` 很慢？**
 MEEF 矩阵构建需要 `4 × 控制点数` 次光刻仿真，OpenMP 并行可加速约 4–5 倍。确保 Release 编译且未限制线程数。
 
-**Q: WEPE-only 和全 EP 的结果差异？**
-WEPE-only 只优化加权关键点，迭代更快但覆盖范围小；全 EP 覆盖完整轮廓，更全面但每轮 MEEF 矩阵更大。
+**Q: `optimize_wepe_only` 和 `wepe_all_eps` 有什么区别？**
+前者决定 MEEF 求解时是否再按 `weight_epe` 缩放各 EP 行；后者决定哪些已选 EP 的 `weight_epe` 为 1。启用 `wepe_all_eps` 后，即使前者为 `true`，所有已选 EP 行也会保留。

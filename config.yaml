@@ -1,10 +1,10 @@
 # 共用图案名；修改一次即可同步 mask 和 MEEF。
-PATTERN_NAME: &PATTERN_NAME "工字型"
+PATTERN_NAME: &PATTERN_NAME "matrix_0010"
 
 # 成像模型
 system:
   wavelength_nm: 193.0
-  pixel_size_nm: 4.0
+  pixel_size_nm: 6.0
   grid_size_pixel: 257
 
 mask:
@@ -32,24 +32,24 @@ meef:
   output_dir: "result/MEEF_result/test"
   config_snapshot_name: "config_used.yaml"
   console_log_name: "console_output.log"
-  lsm_mask_path: "result/LSM_result/LSM_mask.txt"
+  lsm_mask_path: "assets/lsm_mask/0009_matrix_0010.txt" # "result/LSM_result/LSM_mask.txt"
   run_mode: "--optimize"           # --init-only / --build-meef / --optimize
   pattern_name: *PATTERN_NAME
 
   # 迭代
   # finite_difference：保留原中心差分；analytic：需配合 BS + dirac
-  meef_builder: "analytic"
+  meef_builder: "finite_difference"
   meef_matrix_update_mode: "periodic" # every_iteration / periodic / initial_only
   meef_rebuild_interval: 5             # periodic 模式：第 1、4、7... 轮重建
   epe_histogram_bin_width_nm: 0.25 # 可选 0.25 / 0.5 / 1.0 nm
   move_strategy: "xy"
-  iter: 30
+  iter: 40
   stop_mode: "small_step"    # fixed_iterations / small_step
-  step_tol: 0.02                    # small_step: max sqrt(dx^2 + dy^2) < 0.02 pixel
+  step_tol: 0.05                    # small_step: max sqrt(dx^2 + dy^2) < 0.02 pixel
   patience: 2                     # small_step: 连续满足的轮数；设为 1 即首次满足就退出
 
   # 主图形控制点
-  main_cp_mode: "target_interval"  # target_interval / npy / LSM_interval
+  main_cp_mode: "lsm_interval"     # target_interval / lsm_interval / npy
   main_cps_npy_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/CPS/工字型0.8.npy"
   main_cp_interval: 7
   main_symmetry: "none"            # none / center / left-right / diagonal
@@ -57,20 +57,22 @@ meef:
   # 固定 SRAF
   sraf_mask_mode: "lsm"            # lsm / fitted_txt
   fitted_sraf_txt_path: "/Users/wangyuhang/Deskstop/school/Litho_Simulation_cpu/outputs/opc/DPS/DPS_data/LSmask/工字型BS0.8.txt"
-  sraf_cp_interval: 7
+  sraf_cp_interval: 7  # initial 7
   sraf_min_cps: 8
   sraf_min_aera: 50                # 字段名沿用现有拼写
 
   # 曲线、EPE 与光栅化
   curve_type: "BS"                 # OA / BZ / BS
+  sraf_curve_type: "CR"            # BS / OA / CR；CR 为经过 SRAF 控制点的周期 Catmull-Rom
   msaa_level: 16                   # 4 / 16 / 64
-  rasterizer: "dirac"               # msaa / dirac
+  rasterizer: "msaa"               # msaa / dirac
   delta: 0.15
   dilate_radius: 2
   interval_line: 5
   interval_corner: 2
   mid_weight: 4.0
-  other_weight: 1.0
+  other_weight: 4.0
+  wepe_all_eps: true               # true: 全部 EP 的 weight_epe=1；false: 仅关键 EP 为 1
   optimize_wepe_only: false
 
 # SRAF 宽度优化（demo_SRAF_Optimizer_init）

@@ -21,6 +21,9 @@ public:
                          const Eigen::MatrixXd& mask_template,
                          const std::string& type = "gray") const;
 
+    // 在每个子采样点对所有轮廓做奇偶填充，再计算灰度覆盖率；用于带孔图形。
+    Eigen::MatrixXd MSAA_even_odd(const Polygons& polygons, const Eigen::MatrixXd& mask_template) const;
+
     // 论文 JOLT-D-26-04401 第 2.2 节、公式 (6)-(8) 的指示函数重构：
     // 1. 将边界细分到约 segment_fraction * grid_spacing；
     // 2. 用紧支撑三角核把 -n*delta_Gamma 散布到网格；

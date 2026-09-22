@@ -31,11 +31,11 @@ namespace litho {
         std::string stop_mode = "fixed_iterations";
         double step_tol = 0.02;  // small_step 模式的最大位移阈值，单位 pixel
         int patience = 3;
-        // 主图形控制点来源：target_interval / file。
+        // 主图形控制点来源：target_interval / lsm_interval / file。
         // file 模式读取由 demo 预先从 .npy 转换得到的文本文件，坐标顺序为 y x。
         std::string main_cp_mode = "target_interval";
         std::string main_cps_path;
-        // target_interval 模式下的主图形取点间隔。
+        // target_interval 和 lsm_interval 的轮廓取点间隔；0 表示逐点选取。
         int main_cp_interval = 7;
         std::string main_symmetry = "none";
         // SRAF 来源：lsm / fitted_txt。fitted_txt 可以是完整拟合 mask，
@@ -52,6 +52,8 @@ namespace litho {
         std::string rasterizer = "msaa";
         // 曲线类型
         std::string curve_type = "BS";
+        // 固定 SRAF 的曲线类型；空字符串沿用主图形 curve_type。
+        std::string sraf_curve_type;
         double delta = 0.15;
         // 膨胀半径
         int dilate_radius = 2;
@@ -63,7 +65,9 @@ namespace litho {
         double mid_weight = 4.0;
         // 其他点权重
         double other_weight = 1.0;
-        // true：MEEF 每一行再乘 weight_epe，只优化 WEPE 标记的关键 EP 点。
+        // true：所有已选 EP 的 weight_epe 均为 1，WEPE 与 EPE 使用相同的点集。
+        bool wepe_all_eps = false;
+        // true：MEEF 每一行再乘 weight_epe，只优化计入 WEPE 的 EP 点。
         // false：仅使用 weight_meef，所有 EP 点参与优化。
         bool optimize_wepe_only = false;
     };

@@ -88,6 +88,33 @@ Eigen::Vector2d periodic_b_spline_point(
            b3 * point_at(segment + 2);
 }
 
+Eigen::Vector2d centripetal_catmull_rom_point(const Polygon& points, int segment, double u) {
+    const int count = static_cast<int>(points.rows());
+    const auto point_at = [&](int index) { return points.row(wrapped_index(index, count)).transpose().eval(); };
+    const Eigen::Vector2d p0 = point_at(segment - 1);
+    const Eigen::Vector2d p1 = point_at(segment);
+    const Eigen::Vector2d p2 = point_at(segment + 1);
+    const Eigen::Vector2d p3 = point_at(segment + 2);
+    if (u == 0.0) return p1;
+
+    const double d01 = std::sqrt((p1 - p0).norm());
+    const double d12 = std::sqrt((p2 - p1).norm());
+    const double d23 = std::sqrt((p3 - p2).norm());
+    if (d01 < 1e-12 || d12 < 1e-12 || d23 < 1e-12) return (1.0 - u) * p1 + u * p2;
+
+    const double t0 = 0.0;
+    const double t1 = d01;
+    const double t2 = t1 + d12;
+    const double t3 = t2 + d23;
+    const double t = t1 + u * d12;
+    const Eigen::Vector2d a1 = (t1 - t) / (t1 - t0) * p0 + (t - t0) / (t1 - t0) * p1;
+    const Eigen::Vector2d a2 = (t2 - t) / (t2 - t1) * p1 + (t - t1) / (t2 - t1) * p2;
+    const Eigen::Vector2d a3 = (t3 - t) / (t3 - t2) * p2 + (t - t2) / (t3 - t2) * p3;
+    const Eigen::Vector2d b1 = (t2 - t) / (t2 - t0) * a1 + (t - t0) / (t2 - t0) * a2;
+    const Eigen::Vector2d b2 = (t3 - t) / (t3 - t1) * a2 + (t - t1) / (t3 - t1) * a3;
+    return (t2 - t) / (t2 - t1) * b1 + (t - t1) / (t2 - t1) * b2;
+}
+
 }  // namespace
 
 RasterDerivativeXY ParametricDemo::render_curve_dirac_derivative(
@@ -243,6 +270,11 @@ Eigen::MatrixXd ParametricDemo::render_curve(const Polygons& cps,
     return _renderer.MSAA(pts, _mask_template, "gray");
 }
 
+Eigen::MatrixXd ParametricDemo::render_curve_even_odd(const Polygons& cps, int num_points) const {
+    if (_rasterizer != "msaa") throw std::invalid_argument("render_curve_even_odd requires rasterizer=msaa");
+    return _renderer.MSAA_even_odd(get_curve_points(cps, num_points), _mask_template);
+}
+
 Eigen::MatrixXd ParametricDemo::render_curve_dirac(
     const Polygons& cps,
     int num_points,
@@ -264,6 +296,7 @@ Polygons ParametricDemo::get_curve_points(const Polygons& cps,
     if (_curve_type == "OA") return cps;
     if (_curve_type == "BZ") return compute_BZ_cps_and_points(cps);
     if (_curve_type == "BS") return b_spline(cps, num_points);
+    if (_curve_type == "CR") return catmull_rom(cps, num_points);
     return cps;
 }
 
@@ -291,6 +324,28 @@ Polygons ParametricDemo::b_spline(const Polygons& contours,
                 contour, degree, segment, local_t).transpose();
         }
         result.push_back(fitted);
+    }
+    return result;
+}
+
+Polygons ParametricDemo::catmull_rom(const Polygons& contours, int num_points) const {
+    Polygons result;
+    result.reserve(contours.size());
+    for (const auto& contour : contours) {
+        const int point_count = static_cast<int>(contour.rows());
+        if (point_count < 4) {
+            result.push_back(contour);
+            continue;
+        }
+        const int samples_per_segment = std::max(4, (std::max(num_points, 1) + point_count - 1) / point_count);
+        Eigen::MatrixXd fitted(point_count * samples_per_segment, 2);
+        for (int segment = 0; segment < point_count; ++segment) {
+            for (int sample = 0; sample < samples_per_segment; ++sample) {
+                const double u = static_cast<double>(sample) / samples_per_segment;
+                fitted.row(segment * samples_per_segment + sample) = centripetal_catmull_rom_point(contour, segment, u).transpose();
+            }
+        }
+        result.push_back(std::move(fitted));
     }
     return result;
 }

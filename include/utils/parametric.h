@@ -30,15 +30,18 @@ struct RasterDerivativeXY {
 
 class ParametricDemo {
 public:
-    // curve_type: "OA"（直接折线）| "BZ"（三次 Bezier）| "BS"（B样条）
+    // curve_type: "OA"（直接折线）| "BZ"（三次 Bezier）| "BS"（B样条）| "CR"（周期 Catmull-Rom）
     ParametricDemo(const std::string& curve_type,
                    const Eigen::MatrixXd& mask_template,
                    int msaa_level = 16,
                    const std::string& rasterizer = "msaa");
 
-    // 根据控制点生成 mask。num_points 控制每条 B 样条轮廓的曲线采样数。
+    // 根据控制点生成 mask。num_points 控制每条 BS/CR 轮廓的最少采样数。
     Eigen::MatrixXd render_curve(const Polygons& cps,
                                  int num_points = 200) const;
+
+    // 带孔多轮廓专用：曲线采样后按奇偶规则进行 MSAA 灰度填充。
+    Eigen::MatrixXd render_curve_even_odd(const Polygons& cps, int num_points = 200) const;
 
     // 使用与 render_curve 完全相同的控制点和曲线采样点，改用论文第 2.2 节
     // 的 Dirac 指示函数方法进行光栅化，便于和原 MSAA 做一一对照。
@@ -64,7 +67,10 @@ public:
     // ── 周期均匀 B 样条 ──────────────────────────────────────────────────
     // 每个输入轮廓按闭合曲线处理，输入点直接作为 B 样条控制点。
     Polygons b_spline(const Polygons& contours,
-                      int num_points = 100) const;
+                      int num_points = 200) const;
+
+    // 周期向心 Catmull-Rom 样条；输入点位于曲线上，每段至少采样 4 点。
+    Polygons catmull_rom(const Polygons& contours, int num_points = 200) const;
 
     // ── Bezier ──────────────────────────────────────────────────────────
     std::vector<PointTangent> generate_bezier_tangent(

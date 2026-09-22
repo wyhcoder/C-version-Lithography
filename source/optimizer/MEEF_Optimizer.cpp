@@ -283,6 +283,7 @@ namespace litho {
 
         EpSelect ep_select(_target_mask, _config.mid_weight, _config.other_weight);
         _eps_result = ep_select.select_eps_others(_config.interval_line, _config.interval_corner);
+        if (_config.wepe_all_eps) _eps_result.weight_epe.setOnes();
         if (_config.main_cp_mode == "target_interval") {
             _main_control_points = _extract_mask_control_points(
                 _target_mask, config.main_cp_interval, config.main_symmetry);
@@ -291,10 +292,10 @@ namespace litho {
                 _config.main_cps_path,
                 static_cast<int>(_target_mask.rows()),
                 static_cast<int>(_target_mask.cols()));
-        }  else if (_config.main_cp_mode == "LSM_interval") {
+        } else if (_config.main_cp_mode == "lsm_interval" || _config.main_cp_mode == "LSM_interval") {
             _main_control_points = _extract_mask_control_points(
                 _main_sraf.main_mask, config.main_cp_interval, config.main_symmetry);
-        }else {
+        } else {
             throw std::invalid_argument(
                 "MEEF_Optimizer: unsupported main_cp_mode: " +
                 _config.main_cp_mode);
@@ -315,14 +316,14 @@ namespace litho {
         _render_main_mask.resize(N, N);
         _render_initial_mask.resize(N, N);
 
-        ParametricDemo parametric_sraf(
-            config.curve_type, _target_mask, config.msaa_level,
-            config.rasterizer);
-        // fitted_txt 已经是拟合结果，直接固定使用，避免从轮廓再次拟合造成漂移。
-        _render_sraf_mask = (_config.sraf_mask_mode == "fitted_txt")
-            ? _main_sraf.sraf_mask
-            : parametric_sraf.render_curve(_sraf_control_points);
-        _render_main_mask = parametric_sraf.render_curve(_main_control_points);
+        ParametricDemo parametric_renderer(config.curve_type, _target_mask, config.msaa_level, config.rasterizer);
+        const std::string& sraf_curve_type = config.sraf_curve_type.empty() ? config.curve_type : config.sraf_curve_type;
+        ParametricDemo sraf_renderer(sraf_curve_type, _target_mask, config.msaa_level, config.rasterizer);
+        // LSM/MSAA 模式由外轮廓和孔洞轮廓重绘固定 SRAF；拟合文件和 Dirac 模式保留原始灰度 mask。
+        _render_sraf_mask = _config.sraf_mask_mode == "lsm" && config.rasterizer == "msaa"
+            ? sraf_renderer.render_curve_even_odd(_sraf_control_points)
+            : _main_sraf.sraf_mask;
+        _render_main_mask = parametric_renderer.render_curve(_main_control_points);
         _render_initial_mask =
             _render_sraf_mask.array() + _render_main_mask.array();
         _save_meta();
@@ -615,10 +616,14 @@ namespace litho {
             }
         }
 
-        // 2. 在清洗后的 mask 上提取外轮廓
+        // 2. 在细网格上同时提取外轮廓和孔洞边界。原图 findContours 返回前景像素中心，
+        //    对 1-2 像素宽 SRAF 会让外边界内缩、孔洞边界外扩，显著损失线宽。
+        constexpr int contour_scale = 4;
+        cv::Mat high_resolution;
+        cv::resize(cleaned, high_resolution, cv::Size(), contour_scale, contour_scale, cv::INTER_NEAREST);
         std::vector<std::vector<cv::Point>> cv_contours;
-        cv::findContours(cleaned, cv_contours,
-                         cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+        cv::findContours(high_resolution, cv_contours,
+                         cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
 
         // 3. 每条轮廓按间隔 k 采样；SRAF 块小，min_cps 保护：不足时缩小 step
         ControlPoints result;
@@ -628,16 +633,20 @@ namespace litho {
             int N = (int)ip.size();
             if (N == 0) continue;
 
-            int step = std::max(1, k + 1);                  // mode="skip"
+            int step = std::max(1, k + 1) * contour_scale;  // 保持原图像素单位的控制点间距
             int n_by_step = (N + step - 1) / step;          // ceil(N / step)
             if (min_cps > 0 && n_by_step < min_cps) {
                 step = std::max(1, N / min_cps);            // 缩小 step 保证 ≥ min_cps 个点
             }
 
-            IPoints sampled;
-            sampled.reserve((N + step - 1) / step);
-            for (int i = 0; i < N; i += step) sampled.push_back(ip[i]);
-            result.push_back(_ipoints_to_contour(sampled));
+            Contour sampled((N + step - 1) / step, 2);
+            int count = 0;
+            for (int i = 0; i < N; i += step) {
+                sampled(count, 0) = (ip[i][0] + 0.5) / contour_scale - 0.5;
+                sampled(count, 1) = (ip[i][1] + 0.5) / contour_scale - 0.5;
+                ++count;
+            }
+            result.push_back(sampled.topRows(count));
         }
         return result;
     }
@@ -685,6 +694,16 @@ namespace litho {
                     if (c < eps.cols() - 1) f << " ";
                 }
                 f << "\n";
+            }
+        }
+
+        // 与 eps.txt 逐行对应，供 EP 图按是否计入 WEPE 着色。
+        {
+            std::ofstream f(out / "eps_weights.txt");
+            if (!f) throw std::runtime_error("MEEF_Optimizer: cannot write eps_weights.txt");
+            f << "# weight_epe weight_meef\n" << std::setprecision(12);
+            for (int i = 0; i < _eps_result.eps.rows(); ++i) {
+                f << _eps_result.weight_epe(i) << ' ' << _eps_result.weight_meef(i) << '\n';
             }
         }
 
@@ -1584,6 +1603,22 @@ namespace litho {
             std::cout << line.str() << '\n';
         };
 
+        auto print_sraf_exposure = [&](const EvaluatedState& state) {
+            int printed_pixels = 0;
+            double max_aerial = 0.0;
+            for (int row = 0; row < _target_mask.rows(); ++row) {
+                for (int col = 0; col < _target_mask.cols(); ++col) {
+                    if (_render_sraf_mask(row, col) <= 0.5 || _target_mask(row, col) > 0.5) continue;
+                    const double intensity = state.imaging.aerial_image(row, col);
+                    max_aerial = std::max(max_aerial, intensity);
+                    if (intensity >= threshold) ++printed_pixels;
+                }
+            }
+            std::cout << "  SRAF exposure      | printed pixels: " << printed_pixels
+                      << " | max aerial: " << std::fixed << std::setprecision(6) << max_aerial
+                      << " | threshold: " << threshold << '\n';
+        };
+
         // 清空上一次运行产生的历史和最优结果。
         _iteration_history.clear();
         _time_history.clear();
@@ -1636,12 +1671,16 @@ namespace litho {
         _save_cp_history(current_cps, _config.save_file_path, 0);
         _save_curve_history(current_cps, 0);
         current = evaluate(_render_initial_mask);
+        save_matrix(fs::path(_config.save_file_path) / "initial_mask.txt", current.mask);
+        save_matrix(fs::path(_config.save_file_path) / "initial_aerial.txt", current.imaging.aerial_image);
+        save_matrix(fs::path(_config.save_file_path) / "initial_wafer.txt", current.imaging.wafer_image);
 
         std::cout << "\n[Initial State]\n";
         print_metrics("Parametric",
                       current.wepe / std::max(1, _num_weps),
                       current.epe / std::max(1, _num_eps),
                       current.pe);
+        print_sraf_exposure(current);
 
         const auto optimize_start = std::chrono::steady_clock::now();
         int below_tol_count = 0;
@@ -1779,6 +1818,7 @@ namespace litho {
 
             print_metrics("Result", _wepe_history.back(),
                           _epe_history.back(), current.pe);
+            print_sraf_exposure(current);
             {
                 std::ostringstream line;
                 line << std::fixed << std::setprecision(6)

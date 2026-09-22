@@ -113,6 +113,48 @@ void test_periodic_cubic_b_spline() {
 
 }
 
+void test_msaa_even_odd_hole() {
+    litho::Polygon outer(4, 2);
+    outer << 4.0, 4.0, 4.0, 28.0, 28.0, 28.0, 28.0, 4.0;
+    litho::Polygon hole(4, 2);
+    hole << 10.0, 10.0, 10.0, 22.0, 22.0, 22.0, 22.0, 10.0;
+    const Eigen::MatrixXd canvas = Eigen::MatrixXd::Zero(33, 33);
+    for (int msaa_level : {4, 16, 64}) {
+        const litho::ParametricDemo parametric("OA", canvas, msaa_level);
+        const Eigen::MatrixXd ring = parametric.render_curve_even_odd({outer, hole});
+        const Eigen::MatrixXd solid = parametric.render_curve({outer});
+
+        require(ring(7, 7) == 1.0, "SRAF ring must remain filled");
+        require(ring(16, 16) == 0.0, "SRAF hole must remain empty");
+        require(ring(1, 1) == 0.0, "outside SRAF must remain empty");
+        require(ring(4, 16) > 0.0 && ring(4, 16) < 1.0, "SRAF edge must retain gray MSAA coverage");
+        require((solid - parametric.render_curve_even_odd({outer})).cwiseAbs().maxCoeff() < 1e-12,
+                "single contour must match ordinary gray MSAA");
+    }
+}
+
+void test_periodic_centripetal_catmull_rom() {
+    litho::Polygon outer(5, 2);
+    outer << 4.0, 4.0, 4.0, 28.0, 15.0, 30.0, 28.0, 28.0, 28.0, 4.0;
+    litho::Polygon hole(4, 2);
+    hole << 11.0, 11.0, 11.0, 21.0, 21.0, 21.0, 21.0, 11.0;
+    const Eigen::MatrixXd canvas = Eigen::MatrixXd::Zero(33, 33);
+    const litho::ParametricDemo parametric("CR", canvas, 16);
+    const litho::Polygons curves = parametric.get_curve_points({outer, hole}, 17);
+    require(curves.size() == 2, "Catmull-Rom must retain both SRAF contours");
+    require(curves[0].rows() == 20 && curves[1].rows() == 20, "Catmull-Rom must sample every segment");
+    for (int i = 0; i < outer.rows(); ++i) {
+        require((curves[0].row(4 * i) - outer.row(i)).norm() < 1e-12, "Catmull-Rom must pass every outer input point");
+    }
+    for (int i = 0; i < hole.rows(); ++i) {
+        require((curves[1].row(5 * i) - hole.row(i)).norm() < 1e-12, "Catmull-Rom must pass every hole input point");
+    }
+    require(curves[0].allFinite() && curves[1].allFinite(), "Catmull-Rom points must be finite");
+    const Eigen::MatrixXd ring = parametric.render_curve_even_odd({outer, hole}, 17);
+    require(ring(7, 7) == 1.0 && ring(16, 16) == 0.0 && ring(1, 1) == 0.0,
+            "Catmull-Rom SRAF must retain its filled band and empty hole");
+}
+
 void test_same_control_point_rasterizers(
     const std::filesystem::path* output_directory) {
     litho::Polygon controls(8, 2);
@@ -233,6 +275,8 @@ void test_dirac_shape_derivative() {
 int main(int argc, char** argv) {
     try {
         test_periodic_cubic_b_spline();
+        test_msaa_even_odd_hole();
+        test_periodic_centripetal_catmull_rom();
         test_dirac_shape_derivative();
         const std::filesystem::path output_directory =
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};

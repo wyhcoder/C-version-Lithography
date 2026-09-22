@@ -140,6 +140,24 @@ static void show_optimization_comparison(
     }
 }
 
+static void save_meef_figures(const std::filesystem::path& project_root, const std::filesystem::path& save_path) {
+    namespace fs = std::filesystem;
+    const fs::path script = project_root / "scripts/plot_meef_parametric_curves.py";
+    if (!fs::is_regular_file(script)) {
+        std::cerr << "[warning] MEEF 绘图脚本不存在: " << script << '\n';
+        return;
+    }
+    const fs::path venv_python = project_root / ".venv/bin/python";
+    const std::string python = fs::is_regular_file(venv_python) ? shell_quote(venv_python) : "python3";
+    const fs::path matplotlib_cache = save_path / ".matplotlib";
+    fs::create_directories(matplotlib_cache);
+    const std::string command = "MPLBACKEND=Agg MPLCONFIGDIR=" + shell_quote(matplotlib_cache) +
+        " XDG_CACHE_HOME=" + shell_quote(matplotlib_cache) + " " + python + " " + shell_quote(script) +
+        " --result-dir " + shell_quote(save_path) + " --best both";
+    std::cout << "\n保存 MEEF 参数化曲线和 EP 选点图...\n" << std::flush;
+    if (std::system(command.c_str()) != 0) std::cerr << "[warning] MEEF 绘图失败，请检查上述 Python 输出。\n";
+}
+
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
@@ -192,10 +210,10 @@ int main(int argc, char** argv) {
         if (!fs::is_regular_file(target_path)) {
             throw std::runtime_error("YAML 指定的 target 不存在: " + target_path.string());
         }
-        // if (main_cp_mode != "target_interval" && main_cp_mode != "npy") {
-        //     throw std::invalid_argument(
-        //         "meef.main_cp_mode 仅支持 target_interval / npy");
-        // }
+        if (main_cp_mode != "target_interval" && main_cp_mode != "lsm_interval" &&
+            main_cp_mode != "LSM_interval" && main_cp_mode != "npy") {
+            throw std::invalid_argument("meef.main_cp_mode 仅支持 target_interval / lsm_interval / npy");
+        }
         fs::path main_cps_npy_path;
         if (main_cp_mode == "npy") {
             if (main_cps_config_path.empty()) {
@@ -311,9 +329,9 @@ int main(int argc, char** argv) {
             throw std::invalid_argument("small_step 模式下 meef.step_tol 必须为有限正数 (pixel)");
         }
 
-        meef_config.main_cp_mode =
-            (main_cp_mode == "npy") ? "file" : "target_interval";
+        meef_config.main_cp_mode = (main_cp_mode == "npy") ? "file" : main_cp_mode;
         meef_config.main_cp_interval = yaml_required<int>(meef_yaml, "main_cp_interval");
+        if (meef_config.main_cp_interval < 0) throw std::invalid_argument("meef.main_cp_interval 不能为负数");
         meef_config.main_symmetry = yaml_required<std::string>(meef_yaml, "main_symmetry");
 
         if (main_cp_mode == "npy") {
@@ -355,6 +373,10 @@ int main(int argc, char** argv) {
         meef_config.rasterizer = yaml_optional<std::string>(
             meef_yaml, "rasterizer", "msaa");
         meef_config.curve_type = yaml_required<std::string>(meef_yaml, "curve_type");
+        meef_config.sraf_curve_type = yaml_optional<std::string>(meef_yaml, "sraf_curve_type", meef_config.curve_type);
+        if (meef_config.sraf_curve_type != "BS" && meef_config.sraf_curve_type != "OA" && meef_config.sraf_curve_type != "CR") {
+            throw std::invalid_argument("meef.sraf_curve_type 仅支持 BS / OA / CR");
+        }
         meef_config.delta = yaml_required<double>(meef_yaml, "delta");
         meef_config.dilate_radius = yaml_required<int>(meef_yaml, "dilate_radius");
 
@@ -362,14 +384,17 @@ int main(int argc, char** argv) {
         meef_config.interval_corner = yaml_required<int>(meef_yaml, "interval_corner");
         meef_config.mid_weight = yaml_required<double>(meef_yaml, "mid_weight");
         meef_config.other_weight = yaml_required<double>(meef_yaml, "other_weight");
+        meef_config.wepe_all_eps = yaml_optional<bool>(meef_yaml, "wepe_all_eps", false);
         meef_config.optimize_wepe_only = yaml_required<bool>(meef_yaml, "optimize_wepe_only");
 
         std::cout << "MEEF EP mode: "
                   << (meef_config.optimize_wepe_only
-                          ? "WEPE key points only"
+                          ? "WEPE-included EP points only"
                           : "all EP points")
                   << '\n'
+                  << "WEPE weights: " << (meef_config.wepe_all_eps ? "all selected EP = 1" : "key EP = 1, other EP = 0") << '\n'
                   << "Curve rasterizer: " << meef_config.rasterizer << '\n'
+                  << "SRAF curve type: " << meef_config.sraf_curve_type << '\n'
                   << "MEEF builder: " << meef_config.meef_builder << '\n'
                   << "MEEF matrix update: " << meef_config.meef_matrix_update_mode << '\n'
                   << "MEEF rebuild interval: " << meef_config.meef_rebuild_interval << '\n'
@@ -435,6 +460,7 @@ int main(int argc, char** argv) {
                       << "iterations: " << meef_config.iter << '\n';
             optimizer.optimize();
             task_end = std::chrono::steady_clock::now();
+            save_meef_figures(project_root, save_path);
             open_comparison = true;
         } else if (mode != "--init-only") {
             throw std::invalid_argument(
@@ -463,6 +489,7 @@ int main(int argc, char** argv) {
             "main_cps.txt",
             "sraf_cps.txt",
             "eps.txt",
+            "eps_weights.txt",
             "sraf_mask.txt",
             "main_mask.txt",
         };

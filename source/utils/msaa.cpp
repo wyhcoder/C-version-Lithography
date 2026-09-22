@@ -1,6 +1,8 @@
 #include "msaa.h"
 #include <cmath>
 #include <algorithm>
+#include <bitset>
+#include <cstdint>
 #include <stdexcept>
 #ifdef _OPENMP
 #include <omp.h>
@@ -367,6 +369,57 @@ Eigen::MatrixXd AntiAliasRenderer::MSAA(
         }
         return final_cov;
     }
+}
+
+Eigen::MatrixXd AntiAliasRenderer::MSAA_even_odd(const Polygons& polygons, const Eigen::MatrixXd& mask_template) const {
+    const int height = static_cast<int>(mask_template.rows());
+    const int width = static_cast<int>(mask_template.cols());
+    const int sample_count = static_cast<int>(_offsets.rows());
+    std::vector<std::uint64_t> parity(static_cast<size_t>(height) * width, 0);
+
+    for (const Polygon& polygon : polygons) {
+        if (polygon.rows() < 3) continue;
+        const int ymin = std::max(0, static_cast<int>(std::floor(polygon.col(0).minCoeff())));
+        const int xmin = std::max(0, static_cast<int>(std::floor(polygon.col(1).minCoeff())));
+        const int ymax = std::min(height, static_cast<int>(std::ceil(polygon.col(0).maxCoeff())) + 1);
+        const int xmax = std::min(width, static_cast<int>(std::ceil(polygon.col(1).maxCoeff())) + 1);
+        const int rows = ymax - ymin;
+        const int cols = xmax - xmin;
+        if (rows <= 0 || cols <= 0) continue;
+
+        Eigen::MatrixXd samples(static_cast<Eigen::Index>(rows) * cols * sample_count, 2);
+        int index = 0;
+        for (int row = 0; row < rows; ++row) {
+            for (int col = 0; col < cols; ++col) {
+                for (int sample = 0; sample < sample_count; ++sample) {
+                    samples(index, 0) = ymin + row + _offsets(sample, 0);
+                    samples(index, 1) = xmin + col + _offsets(sample, 1);
+                    ++index;
+                }
+            }
+        }
+
+        const Eigen::VectorXi inside = is_inside(polygon, samples);
+        index = 0;
+        for (int row = ymin; row < ymax; ++row) {
+            for (int col = xmin; col < xmax; ++col) {
+                std::uint64_t bits = 0;
+                for (int sample = 0; sample < sample_count; ++sample) {
+                    if (inside(index++) != 0) bits |= std::uint64_t{1} << sample; // 关键点
+                }
+                parity[static_cast<size_t>(row) * width + col] ^= bits; //关键点 相同则为0 不同则为1
+            }
+        }
+    }
+
+    Eigen::MatrixXd coverage = Eigen::MatrixXd::Zero(height, width);
+    for (int row = 0; row < height; ++row) {
+        for (int col = 0; col < width; ++col) {
+            const std::uint64_t bits = parity[static_cast<size_t>(row) * width + col];
+            coverage(row, col) = static_cast<double>(std::bitset<64>(bits).count()) / sample_count;
+        }
+    }
+    return coverage;
 }
 
 Eigen::MatrixXd AntiAliasRenderer::rasterize_dirac_indicator(
