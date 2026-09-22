@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -414,10 +415,44 @@ SkeletonPathResult SrafGeometry::order_skeleton_path(
     result.endpoint_count = static_cast<int>(endpoints.size());
 
     if (result.branchpoint_count != 0) {
-        std::ostringstream message;
-        message << "骨架包含 " << result.branchpoint_count
-                << " 个分叉点，不能表示为一条参数曲线";
-        result.diagnostic = message.str();
+        const auto edge_key = [](int lhs, int rhs) {
+            return std::pair<int, int>{std::min(lhs, rhs), std::max(lhs, rhs)};
+        };
+        std::set<std::pair<int, int>> visited_edges;
+        std::size_t total_edges = 0; // std::size_t 无符号整型数据
+        for (const auto& neighbors : adjacency) total_edges += neighbors.size();
+        total_edges /= 2;
+
+        for (int start = 0; start < static_cast<int>(pixels.size()); ++start) {
+            if (adjacency[start].size() == 2) continue;
+            for (const int neighbor : adjacency[start]) {
+                if (visited_edges.count(edge_key(start, neighbor)) != 0) continue;
+                std::vector<cv::Point2d> edge;
+                edge.emplace_back(pixels[start].x, pixels[start].y);
+                int previous = start;
+                int current = neighbor;
+                while (true) {
+                    if (!visited_edges.insert(edge_key(previous, current)).second) { // 如果这个健已经存在那么。second返回false 也就是重复了
+                        result.diagnostic = "分叉边遍历时重复访问骨架连接";
+                        result.edges.clear();
+                        return result;
+                    }
+                    edge.emplace_back(pixels[current].x, pixels[current].y);
+                    if (adjacency[current].size() != 2) break;
+                    const int next = adjacency[current][0] == previous ? adjacency[current][1] : adjacency[current][0];
+                    previous = current;
+                    current = next;
+                }
+                result.edges.push_back(std::move(edge));
+            }
+        }
+        if (visited_edges.size() != total_edges || result.edges.empty()) {
+            result.diagnostic = "分叉骨架未能完整拆分为无分叉边";
+            result.edges.clear();
+            return result;
+        }
+        result.valid = true;
+        result.diagnostic = "合法分叉骨架：" + std::to_string(result.edges.size()) + " 条边";
         return result;
     }
 
@@ -624,10 +659,16 @@ SrafGeometryResult SrafGeometry::extract(
 
         geometry.path = order_skeleton_path(geometry.skeleton_mask);
         if (geometry.path.valid) {
-            geometry.control_points = sample_skeleton_points(
-                geometry.path.points,
-                config.control_point_interval,
-                geometry.path.closed);
+            if (geometry.path.edges.empty()) {
+                geometry.control_points = sample_skeleton_points(geometry.path.points, config.control_point_interval, geometry.path.closed);
+            } else {
+                geometry.edge_control_points.reserve(geometry.path.edges.size());
+                for (const auto& edge : geometry.path.edges) {
+                    auto controls = sample_skeleton_points(edge, config.control_point_interval, false);
+                    geometry.control_points.insert(geometry.control_points.end(), controls.begin(), controls.end());
+                    geometry.edge_control_points.push_back(std::move(controls));
+                }
+            }
         }
         result.centerlines.push_back(std::move(geometry));
     }

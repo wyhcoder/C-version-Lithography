@@ -122,6 +122,60 @@ void test_render_all() {
     require(mask(8, 10) == 1.0 && mask(16, 10) == 1.0, "render_all must combine all SRAFs");
 }
 
+void test_branch_graph_width() {
+    cv::Mat skeleton = cv::Mat::zeros(15, 15, CV_8UC1);
+    for (int y = 3; y <= 11; ++y) skeleton.at<uchar>(y, 7) = 255;
+    for (int x = 4; x <= 10; ++x) skeleton.at<uchar>(7, x) = 255;
+    litho::SrafCenterlineGeometry centerline;
+    centerline.component_id = 7;
+    centerline.path = litho::SrafGeometry::order_skeleton_path(skeleton);
+    require(centerline.path.valid && centerline.path.edges.size() == 4, "branched test skeleton must have four edges");
+    for (const auto& edge : centerline.path.edges) {
+        const auto controls = litho::SrafGeometry::sample_skeleton_points(edge, 2, false);
+        centerline.control_points.insert(centerline.control_points.end(), controls.begin(), controls.end());
+        centerline.edge_control_points.push_back(controls);
+    }
+    const auto curve = litho::SrafCurve::fit(centerline);
+    require(curve.component_id == 7 && curve.edges.size() == 4, "four graph edges must remain one width component");
+    for (std::size_t i = 0; i < curve.edges.size(); ++i) {
+        const auto& controls = centerline.edge_control_points[i];
+        const auto& fitted = curve.edges[i];
+        require(fitted.size() > controls.size(), "graph edge must be densely fitted from its controls");
+        require(cv::norm(fitted.front() - controls.front()) < 1e-12 && cv::norm(fitted.back() - controls.back()) < 1e-12,
+                "fitted graph edge must preserve its endpoint and junction");
+        for (const auto& control : controls) require(nearest_curve_point(fitted, control) < 1e-10, "Catmull-Rom edge must pass every sampled control");
+    }
+    const auto cache = litho::SrafCurve::build_distance_cache(curve, cv::Size(15, 15), 2.0, 4);
+    const Eigen::MatrixXd mask = litho::SrafCurve::render(cache, 1.0);
+    require(mask(7, 7) == 1.0 && mask(3, 7) > 0.0 && mask(7, 4) > 0.0, "junction and all graph arms must be rendered");
+    require(mask(3, 3) == 0.0, "separate arms must not be connected by an artificial diagonal");
+    require(litho::SrafCurve::render(cache, 2.0).sum() > mask.sum(), "branched SRAF must respond to its shared width");
+}
+
+void test_curved_graph_edge() {
+    litho::SrafCenterlineGeometry centerline;
+    centerline.component_id = 8;
+    centerline.path.valid = true;
+    centerline.edge_control_points = {
+        {{2.0, 10.0}, {4.0, 4.0}, {8.0, 4.0}, {10.0, 10.0}},
+        {{10.0, 10.0}, {14.0, 10.0}},
+        {{10.0, 10.0}, {10.0, 14.0}}};
+    centerline.path.edges = centerline.edge_control_points;
+    for (const auto& controls : centerline.edge_control_points) {
+        centerline.control_points.insert(centerline.control_points.end(), controls.begin(), controls.end());
+    }
+    const auto curve = litho::SrafCurve::fit(centerline, 0.1);
+    require(curve.edges.size() == 3 && curve.degree == 3, "curved graph must keep its three separate fitted edges");
+    bool curved_between_controls = false;
+    for (const auto& point : curve.edges[0]) {
+        if (point.x > 5.0 && point.x < 7.0 && point.y < 3.9) curved_between_controls = true;
+    }
+    require(curved_between_controls, "graph edge must follow a cubic interpolating curve, not just its control polygon");
+    for (const auto& edge : curve.edges) require(cv::norm(edge.back() - cv::Point2d(10.0, 10.0)) < 1e-12 ||
+                                              cv::norm(edge.front() - cv::Point2d(10.0, 10.0)) < 1e-12,
+                                              "all fitted edges must keep the shared junction");
+}
+
 }  // namespace
 
 int main() {
@@ -132,6 +186,8 @@ int main() {
         test_point_sraf();
         test_closed_curve();
         test_render_all();
+        test_branch_graph_width();
+        test_curved_graph_edge();
         std::cout << "sraf_curve tests passed\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

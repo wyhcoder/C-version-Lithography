@@ -17,6 +17,8 @@ struct SrafSplitResult {
 // 一个骨架连通域排序后的路径。坐标统一采用 OpenCV 约定 (x, y)。
 struct SkeletonPathResult {
     std::vector<cv::Point2d> points;
+    // 分叉骨架按端点/分叉点拆出的无分叉边；边内保持原始骨架像素顺序。
+    std::vector<std::vector<cv::Point2d>> edges;
     bool closed = false;
     bool valid = false;
     int endpoint_count = 0;
@@ -35,6 +37,8 @@ struct SrafCenterlineGeometry {
     cv::Mat skeleton_mask;  // CV_8UC1，尺寸与完整版图相同，取值 0/255
     SkeletonPathResult path;
     std::vector<cv::Point2d> control_points;
+    // 分叉图每条边的间隔取点，供逐边开放式插值曲线拟合。
+    std::vector<std::vector<cv::Point2d>> edge_control_points;
 };
 
 struct SrafGeometryConfig {
@@ -89,9 +93,8 @@ public:
     // 输出取值 0/255。
     static cv::Mat skeletonize(const cv::Mat& binary_sraf);
 
-    // 将单个骨架连通域排序为一条路径。单点骨架作为点型 SRAF 合法保留；
-    // 开放路径必须恰好有两个端点；闭环必须没有端点且所有点度数为 2。
-    // 分叉或遗漏像素时 valid=false。
+    // 无分叉骨架排序为一条路径；分叉骨架按端点/分叉点拆成多条边。
+    // 单点、开放路径和闭环继续使用 points；分叉使用 edges。
     static SkeletonPathResult order_skeleton_path(
         const cv::Mat& single_component_skeleton);
 

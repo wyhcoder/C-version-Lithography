@@ -74,46 +74,80 @@ double distance_to_segment(
     return cv::norm(point - (begin + direction * t));
 }
 
-/**
- * @brief 计算一个二维点到整条 SRAF 中心曲线的最短距离。
- *
- * 曲线已经被密集采样为有序折线，因此逐段计算距离并取最小值。闭合曲线会
- * 额外计算最后一个采样点到第一个采样点之间的闭合线段。
- *
- * @param point 等待计算距离的像素或子像素坐标。
- * @param curve 拟合并密集采样后的 SRAF 参数曲线。
- * @return point 到曲线的最短距离，单位为像素。
- */
-double distance_to_curve(
-    const cv::Point2d& point,
-    const SrafParametricCurve& curve) {
-    if (curve.points.size() == 1) return cv::norm(point - curve.points.front());
+// 开放式向心 Catmull-Rom：两端用镜像点补齐邻域，所有控制点都位于曲线上。
+cv::Point2d open_catmull_rom_point(const std::vector<cv::Point2d>& controls, int segment, double u) {
+    const cv::Point2d p1 = controls[segment];
+    const cv::Point2d p2 = controls[segment + 1];
+    const cv::Point2d p0 = segment == 0 ? 2.0 * p1 - p2 : controls[segment - 1];
+    const cv::Point2d p3 = segment + 2 < static_cast<int>(controls.size()) ? controls[segment + 2] : 2.0 * p2 - p1;
+    if (u == 0.0) return p1;
 
-    double minimum = std::numeric_limits<double>::infinity();
-    for (std::size_t i = 1; i < curve.points.size(); ++i) {
-        minimum = std::min(
-            minimum,
-            distance_to_segment(point, curve.points[i - 1], curve.points[i]));
+    const double d01 = std::sqrt(cv::norm(p1 - p0));
+    const double d12 = std::sqrt(cv::norm(p2 - p1));
+    const double d23 = std::sqrt(cv::norm(p3 - p2));
+    if (d01 < 1e-12 || d12 < 1e-12 || d23 < 1e-12) return (1.0 - u) * p1 + u * p2;
+
+    const double t0 = 0.0;
+    const double t1 = d01;
+    const double t2 = t1 + d12;
+    const double t3 = t2 + d23;
+    const double t = t1 + u * d12;
+    const cv::Point2d a1 = (t1 - t) / (t1 - t0) * p0 + (t - t0) / (t1 - t0) * p1;
+    const cv::Point2d a2 = (t2 - t) / (t2 - t1) * p1 + (t - t1) / (t2 - t1) * p2;
+    const cv::Point2d a3 = (t3 - t) / (t3 - t2) * p2 + (t - t2) / (t3 - t2) * p3;
+    const cv::Point2d b1 = (t2 - t) / (t2 - t0) * a1 + (t - t0) / (t2 - t0) * a2;
+    const cv::Point2d b2 = (t3 - t) / (t3 - t1) * a2 + (t - t1) / (t3 - t1) * a3;
+    return (t2 - t) / (t2 - t1) * b1 + (t - t1) / (t2 - t1) * b2;
+}
+
+std::vector<cv::Point2d> fit_open_edge(const std::vector<cv::Point2d>& controls, double sample_spacing) {
+    std::vector<cv::Point2d> fitted;
+    for (int segment = 0; segment + 1 < static_cast<int>(controls.size()); ++segment) {
+        const int steps = std::max(1, static_cast<int>(std::ceil(cv::norm(controls[segment + 1] - controls[segment]) / sample_spacing)));
+        for (int step = 0; step < steps; ++step) {
+            const double u = static_cast<double>(step) / steps;
+            fitted.push_back(controls.size() == 2 ? (1.0 - u) * controls[segment] + u * controls[segment + 1]
+                                                  : open_catmull_rom_point(controls, segment, u));
+        }
     }
-    if (curve.closed) {
-        minimum = std::min(
-            minimum,
-            distance_to_segment(point, curve.points.back(), curve.points.front()));
-    }
-    return minimum;
+    fitted.push_back(controls.back());
+    return fitted;
+}
+
+/**
+ * @brief 将单条样条或分叉骨架的多条边展开为独立线段。
+ *
+ * 不跨越两条图边相连，避免在分叉处生成并不存在的直连线段。
+ */
+struct CurveSegment {
+    cv::Point2d begin;
+    cv::Point2d end;
+};
+
+std::vector<CurveSegment> curve_segments(const SrafParametricCurve& curve) {
+    std::vector<CurveSegment> segments;
+    const auto append_path = [&](const std::vector<cv::Point2d>& path, bool closed) {
+        if (path.empty()) return;
+        if (path.size() == 1) segments.push_back({path.front(), path.front()});
+        for (std::size_t i = 1; i < path.size(); ++i) segments.push_back({path[i - 1], path[i]});
+        if (closed && path.size() > 1) segments.push_back({path.back(), path.front()});
+    };
+    if (curve.edges.empty()) append_path(curve.points, curve.closed);
+    else for (const auto& edge : curve.edges) append_path(edge, false);
+    return segments;
 }
 
 }  // namespace
 
 /**
- * @brief 用骨架间隔点直接构造一根 B 样条中心线。
+ * @brief 将一块 SRAF 构造为 B 样条或分叉骨架图。
  *
- * 输入点直接作为 B 样条控制点，不再求解另一组插值控制点。开放曲线使用
- * 夹持节点，因此经过首尾控制点；闭合曲线使用周期节点，首尾平滑连接。
+ * 无分叉时沿用原来的 B 样条；分叉时每条边用开放式向心 Catmull-Rom
+ * 拟合，曲线经过边的首尾节点，避免分叉连接处产生间隙。
  *
  * @param centerline 单根 SRAF 的有序骨架、开放/闭合标志和间隔控制点。
  * @param sample_spacing 相邻密集曲线点的大致间隔，单位为像素，必须大于 0。
- * @return B 样条次数、原始控制点和密集曲线点。
+ * @return B 样条曲线或多条插值曲线边，同属一个 component_id。
  */
 SrafParametricCurve SrafCurve::fit(
     const SrafCenterlineGeometry& centerline,
@@ -132,6 +166,22 @@ SrafParametricCurve SrafCurve::fit(
     curve.component_id = centerline.component_id;
     curve.closed = centerline.path.closed;
     curve.spline_control_points = centerline.control_points;
+    if (!centerline.path.edges.empty()) {
+        if (centerline.edge_control_points.size() != centerline.path.edges.size()) {
+            throw std::invalid_argument("SrafCurve::fit: graph edges and control groups have different sizes");
+        }
+        curve.edges.reserve(centerline.path.edges.size());
+        for (std::size_t i = 0; i < centerline.path.edges.size(); ++i) {
+            const auto& edge = centerline.path.edges[i];
+            const auto& sampled = centerline.edge_control_points[i];
+            if (sampled.size() < 2) throw std::invalid_argument("SrafCurve::fit: graph edge has fewer than two controls");
+            // 小闭环若只采到同一个首尾节点，补用原像素链，避免整条边坍缩成点。
+            const auto& controls = sampled.size() == 2 && cv::norm(sampled.front() - sampled.back()) < 1e-12 ? edge : sampled;
+            curve.degree = std::max(curve.degree, controls.size() == 2 ? 1 : 3);
+            curve.edges.push_back(fit_open_edge(controls, sample_spacing));
+        }
+        return curve;
+    }
     const auto& control_points = curve.spline_control_points;
     if (control_points.size() == 1) {
         curve.degree = 0;
@@ -207,7 +257,8 @@ SrafDistanceCache SrafCurve::build_distance_cache(
     cv::Size mask_size,
     double max_half_width,
     int samples_per_axis) {
-    if (curve.points.empty()) {
+    const std::vector<CurveSegment> segments = curve_segments(curve);
+    if (segments.empty()) {
         throw std::invalid_argument("SrafCurve::build_distance_cache: curve is empty");
     }
     if (mask_size.width <= 0 || mask_size.height <= 0) {
@@ -217,15 +268,17 @@ SrafDistanceCache SrafCurve::build_distance_cache(
         throw std::invalid_argument("SrafCurve::build_distance_cache: invalid render settings");
     }
 
-    double min_x = curve.points.front().x;
+    double min_x = segments.front().begin.x;
     double max_x = min_x;
-    double min_y = curve.points.front().y;
+    double min_y = segments.front().begin.y;
     double max_y = min_y;
-    for (const auto& point : curve.points) {
-        min_x = std::min(min_x, point.x);
-        max_x = std::max(max_x, point.x);
-        min_y = std::min(min_y, point.y);
-        max_y = std::max(max_y, point.y);
+    for (const auto& segment : segments) {
+        for (const auto& point : {segment.begin, segment.end}) {
+            min_x = std::min(min_x, point.x);
+            max_x = std::max(max_x, point.x);
+            min_y = std::min(min_y, point.y);
+            max_y = std::max(max_y, point.y);
+        }
     }
 
     const double padding = max_half_width + 1.0;
@@ -245,14 +298,34 @@ SrafDistanceCache SrafCurve::build_distance_cache(
     const std::size_t pixel_count = static_cast<std::size_t>(cache.roi.area());
     cache.distances.reserve(pixel_count * sample_count);
 
+    // 每段只加入可被 max_half_width 覆盖的像素桶；远离曲线的子像素直接记为无穷远。
+    std::vector<std::vector<std::size_t>> nearby_segments(pixel_count);
+    for (std::size_t index = 0; index < segments.size(); ++index) {
+        const auto& segment = segments[index];
+        const int x0 = std::max(cache.roi.x, static_cast<int>(std::floor(std::min(segment.begin.x, segment.end.x) - padding)));
+        const int x1 = std::min(cache.roi.x + cache.roi.width - 1, static_cast<int>(std::ceil(std::max(segment.begin.x, segment.end.x) + padding)));
+        const int y0 = std::max(cache.roi.y, static_cast<int>(std::floor(std::min(segment.begin.y, segment.end.y) - padding)));
+        const int y1 = std::min(cache.roi.y + cache.roi.height - 1, static_cast<int>(std::ceil(std::max(segment.begin.y, segment.end.y) + padding)));
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) nearby_segments[static_cast<std::size_t>(y - cache.roi.y) * cache.roi.width + x - cache.roi.x].push_back(index);
+        }
+    }
+
     for (int y = cache.roi.y; y < cache.roi.y + cache.roi.height; ++y) {
         for (int x = cache.roi.x; x < cache.roi.x + cache.roi.width; ++x) {
+            const auto& candidates = nearby_segments[static_cast<std::size_t>(y - cache.roi.y) * cache.roi.width + x - cache.roi.x];
+            if (candidates.empty()) {
+                cache.distances.insert(cache.distances.end(), sample_count, std::numeric_limits<float>::infinity());
+                continue;
+            }
             for (int sy = 0; sy < samples_per_axis; ++sy) {
                 for (int sx = 0; sx < samples_per_axis; ++sx) {
                     const double offset_x = (static_cast<double>(sx) + 0.5) / samples_per_axis - 0.5;
                     const double offset_y = (static_cast<double>(sy) + 0.5) / samples_per_axis - 0.5;
                     const cv::Point2d sample(x + offset_x, y + offset_y);
-                    cache.distances.push_back(static_cast<float>(distance_to_curve(sample, curve)));
+                    double minimum = std::numeric_limits<double>::infinity();
+                    for (const std::size_t index : candidates) minimum = std::min(minimum, distance_to_segment(sample, segments[index].begin, segments[index].end));
+                    cache.distances.push_back(static_cast<float>(minimum));
                 }
             }
         }

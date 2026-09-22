@@ -297,8 +297,7 @@ SRAF_Optimizer::SRAF_Optimizer(
                   << " | " << centerline.path.diagnostic << '\n';
     }
 
-    // 非法骨架不能拟合为一条参数曲线：将对应 component 从优化几何中删除，
-    // 其余合法 component 继续建立距离缓存并参与宽度优化。
+    // 分叉骨架已拆成图边；只有路径确实不连续或控制点为空的 component 才删除。
     drop_invalid_geometry_components();
     _control_point_count = 0;
     for (const auto& centerline : _sraf_geometry_result.centerlines) {
@@ -321,7 +320,7 @@ SRAF_Optimizer::SRAF_Optimizer(
     save_initial_masks(); // 保存最初宽度初始化后的掩模
 }
 
-// 删除不能表示为单条参数曲线的 SRAF component，并重建保留骨架的并集。
+// 删除确实无法参数化的 SRAF component，并重建保留骨架的并集。
 // component_id 保留提取时的原始编号，保证独立宽度及 CSV 输出仍可追溯。
 void SRAF_Optimizer::drop_invalid_geometry_components() {
     auto& centerlines = _sraf_geometry_result.centerlines;
@@ -373,7 +372,7 @@ void SRAF_Optimizer::validate_geometry_result() const {
     }
 }
 
-// 将每根 SRAF 的 B 样条控制点按 (y,x) 顺序保存到 TXT。
+// 将每根 SRAF 的控制点按 (y,x) 顺序保存到 TXT。
 void SRAF_Optimizer::save_control_points() const {
     namespace fs = std::filesystem;
     const fs::path output_dir(_sraf_config.save_file_path);
@@ -406,6 +405,22 @@ void SRAF_Optimizer::save_control_points() const {
             output_path.string());
     }
     std::cout << "\n  control points saved: " << output_path << '\n';
+
+    // 分叉连通块另存每条边的原始骨架像素链，便于与拟合结果逐边比较。
+    const fs::path edge_path = output_dir / "sraf_graph_edges_yx.txt";
+    std::ofstream edge_output(edge_path);
+    if (!edge_output) throw std::runtime_error("SRAF_Optimizer: cannot write graph edges to " + edge_path.string());
+    edge_output << "# branched SRAF graph edge vertices\n# coordinate_order=y x\n" << std::fixed << std::setprecision(6);
+    for (const auto& centerline : _sraf_geometry_result.centerlines) {
+        for (std::size_t edge = 0; edge < centerline.path.edges.size(); ++edge) {
+            const auto& vertices = centerline.path.edges[edge];
+            edge_output << "# component=" << centerline.component_id << " edge=" << edge << " vertices=" << vertices.size()
+                        << " controls=" << centerline.edge_control_points[edge].size() << '\n';
+            for (const auto& point : vertices) edge_output << point.y << ' ' << point.x << '\n';
+        }
+    }
+    if (!edge_output) throw std::runtime_error("SRAF_Optimizer: failed while writing graph edges to " + edge_path.string());
+    std::cout << "  graph edges saved   : " << edge_path << '\n';
 }
 
 // 将主图形控制点按 (y,x) 顺序保存，便于核对读取结果。
@@ -530,6 +545,19 @@ void SRAF_Optimizer::save_initial_masks() const {
         (output_dir / "initial_combined_mask.txt").string(),
         6);
 
+    const fs::path fitted_path = output_dir / "sraf_fitted_graph_edges_yx.txt";
+    std::ofstream fitted_output(fitted_path);
+    if (!fitted_output) throw std::runtime_error("SRAF_Optimizer: cannot write fitted graph edges to " + fitted_path.string());
+    fitted_output << "# fitted SRAF graph edge points\n# coordinate_order=y x\n" << std::fixed << std::setprecision(6);
+    for (const auto& curve : _sraf_curves) {
+        for (std::size_t edge = 0; edge < curve.edges.size(); ++edge) {
+            fitted_output << "# component=" << curve.component_id << " edge=" << edge << " count=" << curve.edges[edge].size() << '\n';
+            for (const auto& point : curve.edges[edge]) fitted_output << point.y << ' ' << point.x << '\n';
+        }
+    }
+    if (!fitted_output) throw std::runtime_error("SRAF_Optimizer: failed while writing fitted graph edges to " + fitted_path.string());
+    std::cout << "  fitted edges saved: " << fitted_path << '\n';
+
     std::cout << "  SRAF width mode   : "
               << (_sraf_config.independent_sraf_widths
                       ? "independent"
@@ -649,7 +677,7 @@ void SRAF_Optimizer::optimize() {
             make_panel(optimized_color, optimized_title.str()),
             comparison);
         cv::imwrite(
-            (output_dir / "pv_band_comparison.png").string(),
+            (output_dir / (std::filesystem::path(optimized_file_name).stem().string() + "_comparison.png")).string(),
             comparison);
     };
 
@@ -684,7 +712,7 @@ void SRAF_Optimizer::optimize() {
             throw std::invalid_argument(
                 "SRAF_Optimizer: invalid independent-width CMA-ES parameters");
         }
-
+        // 每次迭代优化过程中的信息
         struct IndependentWidthRecord {
             int evaluation;
             double cost;
@@ -696,7 +724,7 @@ void SRAF_Optimizer::optimize() {
             double pvband;
             std::vector<double> widths;
         };
-
+        // 保存最佳结果
         std::vector<IndependentWidthRecord> history;
         std::vector<double> best_widths = _initial_half_widths;
         double best_cost = joint_cost(init_eval);
@@ -744,7 +772,7 @@ void SRAF_Optimizer::optimize() {
                 parameters.data(), parameters.data() + parameters.size());
             Eigen::MatrixXd sraf = SrafCurve::render_all(
                 _sraf_distance_caches, widths);
-            Eigen::MatrixXd mask = _rendered_main_mask.cwiseMax(sraf);
+            Eigen::MatrixXd mask = _rendered_main_mask.cwiseMax(sraf); // sraf 和 主图形组合
             EvaluateState state = evaluate(mask);
             const double cost = joint_cost(state);
 
@@ -788,14 +816,10 @@ void SRAF_Optimizer::optimize() {
         // 保存搜索过程中找到的全局最优宽度和对应 mask。
         _optimized_half_widths = best_widths;
         _optimized_mask = best_state.mask;
-
-        const std::filesystem::path output_dir(
-            _sraf_config.save_file_path);
-        std::ofstream history_file(
-            output_dir / "independent_width_history.csv");
-        history_file
-            << "evaluation,cost,norm_wepe,norm_pe,norm_pvband,"
-               "mean_wepe,pe,pvband";
+        // 标准文件系统库用于保证不同系统之间的文件路径的正确
+        const std::filesystem::path output_dir(_sraf_config.save_file_path);
+        std::ofstream history_file(output_dir / "independent_width_history.csv"); // 构造向文件写入数据流
+        history_file<< "evaluation,cost,norm_wepe,norm_pe,norm_pvband,""mean_wepe,pe,pvband";
         for (std::size_t i = 0; i < best_widths.size(); ++i) {
             history_file << ",w_" << i + 1;
         }
@@ -815,12 +839,8 @@ void SRAF_Optimizer::optimize() {
             history_file << '\n';
         }
 
-        std::ofstream widths_file(
-            output_dir / "optimized_independent_widths.csv");
-        widths_file
-            << "sraf_index,component_id,initial_half_width,"
-               "optimized_half_width\n"
-            << std::fixed << std::setprecision(6);
+        std::ofstream widths_file(output_dir / "optimized_independent_widths.csv");
+        widths_file << "sraf_index,component_id,initial_half_width,""optimized_half_width\n" << std::fixed << std::setprecision(6);
         for (std::size_t i = 0; i < best_widths.size(); ++i) {
             widths_file << i << ','
                         << _sraf_geometry_result.centerlines[i].component_id

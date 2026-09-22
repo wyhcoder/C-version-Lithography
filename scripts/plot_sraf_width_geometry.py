@@ -3,7 +3,8 @@
 
 The default inputs are the current outputs/sraf_optimizer_init files.  The
 figure combines the target contour, main-mask periodic B-spline, SRAF skeleton
-control points, fitted SRAF center curves, and bands with the optimized widths.
+control points, fitted SRAF center curves (including separate graph edges),
+and bands with the optimized widths.
 All coordinates and widths are expressed in pixels.
 """
 
@@ -53,18 +54,19 @@ def project_root() -> Path:
 
 
 def load_sraf_centerlines(path: Path) -> list[SrafCenterline]:
-    """Load component metadata and (x,y) skeleton controls from the C++ output."""
+    """Load component metadata and convert saved skeleton controls to (x,y)."""
     if not path.is_file():
         raise FileNotFoundError(f"SRAF control-point file not found: {path}")
 
     header_pattern = re.compile(
-        r"^#\s*component=(\d+)\s+closed=([01])\s+count=(\d+)\s*$"
+        r"^#\s*component=(\d+)\s+closed=([01])\s+count=(\d+)\s*$" # 正则化表达式用于匹配
     )
     centerlines: list[SrafCenterline] = []
     component_id: int | None = None
     closed = False
     expected_count = 0
     points: list[tuple[float, float]] = []
+    coordinate_order: str | None = None
 
     def finish_component() -> None:
         nonlocal component_id, closed, expected_count, points
@@ -78,6 +80,8 @@ def load_sraf_centerlines(path: Path) -> list[SrafCenterline]:
         controls = np.asarray(points, dtype=float).reshape((-1, 2))
         if controls.shape[0] == 0 or not np.all(np.isfinite(controls)):
             raise ValueError(f"component {component_id} in {path} has invalid controls")
+        if coordinate_order == "y x":
+            controls = controls[:, ::-1]
         centerlines.append(SrafCenterline(component_id, closed, controls))
         component_id = None
         expected_count = 0
@@ -87,6 +91,11 @@ def load_sraf_centerlines(path: Path) -> list[SrafCenterline]:
         path.read_text(encoding="utf-8").splitlines(), start=1
     ):
         stripped = raw_line.strip()
+        if stripped.startswith("# coordinate_order="):
+            coordinate_order = stripped.partition("=")[2].strip()
+            if coordinate_order not in {"x y", "y x"}:
+                raise ValueError(f"unsupported coordinate order in {path}:{line_number}")
+            continue
         match = header_pattern.match(stripped)
         if match:
             finish_component()
@@ -107,9 +116,71 @@ def load_sraf_centerlines(path: Path) -> list[SrafCenterline]:
             raise ValueError(f"invalid coordinate at {path}:{line_number}") from error
 
     finish_component()
+    if coordinate_order is None:
+        raise ValueError(f"missing coordinate_order in {path}")
     if not centerlines:
         raise ValueError(f"no SRAF centerlines found in {path}")
     return centerlines
+
+
+def load_fitted_graph_edges(path: Path) -> dict[int, list[np.ndarray]]:
+    """Read C++ fitted graph edges; every header starts an independent curve."""
+    if not path.is_file():
+        return {}
+
+    header = re.compile(r"^#\s*component=(\d+)\s+edge=(\d+)\s+count=(\d+)\s*$")
+    grouped: dict[int, list[np.ndarray]] = {}
+    component_id: int | None = None
+    edge_index = 0
+    expected_count = 0
+    points: list[tuple[float, float]] = []
+    coordinate_order: str | None = None
+
+    def finish_edge() -> None:
+        nonlocal component_id, points
+        if component_id is None:
+            return
+        if len(points) != expected_count or expected_count < 2:
+            raise ValueError(f"component {component_id} edge {edge_index} has an invalid point count in {path}")
+        curve = np.asarray(points, dtype=float)
+        if not np.all(np.isfinite(curve)):
+            raise ValueError(f"component {component_id} edge {edge_index} contains nonfinite points in {path}")
+        if coordinate_order == "y x":
+            curve = curve[:, ::-1]
+        edges = grouped.setdefault(component_id, [])
+        if edge_index != len(edges):
+            raise ValueError(f"component {component_id} edge indices are not consecutive in {path}")
+        edges.append(curve)
+        component_id = None
+        points = []
+
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = raw_line.strip()
+        if stripped.startswith("# coordinate_order="):
+            coordinate_order = stripped.partition("=")[2].strip()
+            if coordinate_order not in {"x y", "y x"}:
+                raise ValueError(f"unsupported coordinate order in {path}:{line_number}")
+            continue
+        match = header.match(stripped)
+        if match:
+            finish_edge()
+            component_id = int(match.group(1))
+            edge_index = int(match.group(2))
+            expected_count = int(match.group(3))
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        if component_id is None:
+            raise ValueError(f"coordinate appears before a graph edge header at {path}:{line_number}")
+        fields = stripped.split()
+        if len(fields) != 2:
+            raise ValueError(f"expected exactly two coordinates at {path}:{line_number}")
+        points.append((float(fields[0]), float(fields[1])))
+
+    finish_edge()
+    if coordinate_order is None:
+        raise ValueError(f"missing coordinate_order in {path}")
+    return grouped
 
 
 def load_independent_widths(path: Path) -> list[SrafWidth]:
@@ -367,7 +438,7 @@ def plot_geometry(
     output_path: Path,
     main_samples: int,
     sraf_sample_spacing: float,
-) -> tuple[int, int, float, float]:
+) -> tuple[int, int, int, float, float]:
     target_mask = np.loadtxt(target_mask_path)
     if target_mask.ndim != 2 or min(target_mask.shape) < 2:
         raise ValueError("target mask must be a two-dimensional matrix")
@@ -376,12 +447,25 @@ def plot_geometry(
     main_curves_yx = [
         periodic_uniform_bspline(controls, main_samples) for controls in main_controls_yx
     ]
-    centerlines = load_sraf_centerlines(result_dir / "sraf_control_points_xy.txt")
+    centerlines = load_sraf_centerlines(result_dir / "sraf_control_points_yx.txt")
     widths = load_independent_widths(result_dir / "optimized_independent_widths.csv")
     validate_component_mapping(centerlines, widths)
-    sraf_curves_xy = [
-        fit_sraf_centerline(centerline, sraf_sample_spacing) for centerline in centerlines
-    ]
+    fitted_graph_edges = load_fitted_graph_edges(result_dir / "sraf_fitted_graph_edges_yx.txt")
+    graph_path = result_dir / "sraf_graph_edges_yx.txt"
+    if graph_path.is_file() and not (result_dir / "sraf_fitted_graph_edges_yx.txt").is_file():
+        raise FileNotFoundError(f"branched SRAF fitted-edge file not found: {result_dir / 'sraf_fitted_graph_edges_yx.txt'}")
+    if graph_path.is_file():
+        raw_graph_components = {
+            int(match.group(1))
+            for line in graph_path.read_text(encoding="utf-8").splitlines()
+            if (match := re.match(r"^#\s*component=(\d+)\s+edge=", line))
+        }
+        missing_components = raw_graph_components - set(fitted_graph_edges)
+        if missing_components:
+            raise ValueError(f"fitted graph edges are missing components: {sorted(missing_components)}")
+    unknown_components = set(fitted_graph_edges) - {centerline.component_id for centerline in centerlines}
+    if unknown_components:
+        raise ValueError(f"fitted graph edges have unknown components: {sorted(unknown_components)}")
 
     rows, columns = target_mask.shape
     x_pixels = np.arange(columns)
@@ -407,23 +491,12 @@ def plot_geometry(
         zorder=3,
     )
 
-    for centerline, curve, width in zip(centerlines, sraf_curves_xy, widths):
-        draw_sraf_band(
-            axis,
-            curve,
-            width.optimized_half_width,
-            centerline.closed,
-            band_fill,
-            band_edge,
-        )
-        axis.plot(
-            curve[:, 0],
-            curve[:, 1],
-            color=centerline_color,
-            linewidth=0.9,
-            linestyle="--",
-            zorder=4,
-        )
+    for centerline, width in zip(centerlines, widths):
+        edges = fitted_graph_edges.get(centerline.component_id)
+        curves = edges if edges is not None else [fit_sraf_centerline(centerline, sraf_sample_spacing)]
+        for curve in curves:
+            draw_sraf_band(axis, curve, width.optimized_half_width, centerline.closed and edges is None, band_fill, band_edge)
+            axis.plot(curve[:, 0], curve[:, 1], color=centerline_color, linewidth=0.9, linestyle="--", zorder=4)
         axis.scatter(
             centerline.controls_xy[:, 0],
             centerline.controls_xy[:, 1],
@@ -488,6 +561,7 @@ def plot_geometry(
     return (
         len(main_controls_yx),
         len(centerlines),
+        sum(len(edges) for edges in fitted_graph_edges.values()),
         float(np.min(optimized)),
         float(np.max(optimized)),
     )
@@ -537,7 +611,7 @@ def main() -> None:
         if args.output
         else result_dir / "optimized_independent_parametric_geometry.png"
     )
-    main_count, sraf_count, minimum_width, maximum_width = plot_geometry(
+    main_count, sraf_count, graph_edge_count, minimum_width, maximum_width = plot_geometry(
         result_dir,
         target_mask,
         output_path,
@@ -548,6 +622,7 @@ def main() -> None:
     print(f"target mask        : {target_mask}")
     print(f"main contours      : {main_count}")
     print(f"SRAF center curves : {sraf_count}")
+    print(f"fitted graph edges : {graph_edge_count}")
     print(f"half-width range   : [{minimum_width:.6f}, {maximum_width:.6f}] pixel")
     print(f"full-width range   : [{2.0 * minimum_width:.6f}, {2.0 * maximum_width:.6f}] pixel")
     print(f"saved figure       : {output_path}")

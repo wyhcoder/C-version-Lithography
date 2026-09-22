@@ -1,10 +1,10 @@
 # 共用图案名；修改一次即可同步 mask 和 MEEF。
-PATTERN_NAME: &PATTERN_NAME "matrix_0010"
+PATTERN_NAME: &PATTERN_NAME "工字型"
 
 # 成像模型
 system:
   wavelength_nm: 193.0
-  pixel_size_nm: 6.0
+  pixel_size_nm: 4.0
   grid_size_pixel: 257
 
 mask:
@@ -32,7 +32,7 @@ meef:
   output_dir: "result/MEEF_result/test"
   config_snapshot_name: "config_used.yaml"
   console_log_name: "console_output.log"
-  lsm_mask_path: "assets/lsm_mask/0009_matrix_0010.txt" # "result/LSM_result/LSM_mask.txt"
+  lsm_mask_path: "result/LSM_result/LSM_mask.txt" # "result/LSM_result/LSM_mask.txt" assets/lsm_mask/0009_matrix_0010.txt
   run_mode: "--optimize"           # --init-only / --build-meef / --optimize
   pattern_name: *PATTERN_NAME
 
@@ -79,7 +79,7 @@ meef:
 # 路径均相对于项目根目录；宽度、间隔和半径的单位均为像素。
 sraf_optimizer:
   paths:
-    lsm_mask_path: "result/LSM_result/LSM_mask.txt"
+    lsm_mask_path: "result/LSM_result/LSM_mask.txt" #result/LSM_result/LSM_mask.txt assets/lsm_mask/0009_matrix_0010.txt
     main_control_points_path: "result/MEEF_result/test/best_wepe/control_points.txt"
     output_dir: "result/SRAF_result"
 
@@ -109,12 +109,12 @@ sraf_optimizer:
       other_weight: 1.0
     pv_band:
       dose_margin: 0.05
-      defocus_range: 200.0
+      defocus_range: 100.0
       defocus_step: 3
       mode: "full"                  # dose_only / defocus_only / full
 
   width_optimization:
-    mode: "shared"             # shared / independent
+    mode: "independent"             # shared / independent
     shared:
       min_half_width: 1.0
       max_half_width: 4.0

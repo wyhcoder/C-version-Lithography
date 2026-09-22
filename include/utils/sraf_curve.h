@@ -9,14 +9,14 @@
 
 namespace litho {
 
-// 单根 SRAF 的 B 样条。spline_control_points 就是从骨架间隔取得的控制点，
-// points 是按曲线顺序密集采样的 (x,y) 坐标。
+// 一块 SRAF 的中心几何：无分叉时为 B 样条，分叉时为多条 Catmull-Rom 曲线。
 struct SrafParametricCurve {
     int component_id = 0;
     bool closed = false;
     int degree = 0;
     std::vector<cv::Point2d> spline_control_points;
     std::vector<cv::Point2d> points;
+    std::vector<std::vector<cv::Point2d>> edges;
 };
 
 // 固定中心曲线的子像素距离缓存。宽度优化时只需改变距离阈值。
@@ -31,8 +31,7 @@ struct SrafDistanceCache {
 
 class SrafCurve {
 public:
-    // 直接把骨架取样点作为 B 样条控制点，不要求曲线经过中间控制点。
-    // 开放曲线使用夹持均匀 B 样条，闭合曲线使用周期均匀 B 样条。
+    // 无分叉骨架使用 B 样条；分叉骨架按边拟合开放式 Catmull-Rom，经过交点。
     // sample_spacing 控制拟合曲线相邻密集点的大致距离，单位为像素。
     static SrafParametricCurve fit(
         const SrafCenterlineGeometry& centerline,

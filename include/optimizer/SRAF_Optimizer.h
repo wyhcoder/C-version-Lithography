@@ -121,7 +121,7 @@ public:
     std::size_t control_point_count() const noexcept {
         return _control_point_count;
     }
-    // 因骨架分叉、路径不连续或控制点为空而从宽度优化中删除的原始 component id。
+    // 因路径不连续或控制点为空而从宽度优化中删除的原始 component id；分叉骨架正常保留。
     const std::vector<int>& dropped_component_ids() const noexcept {
         return _dropped_component_ids;
     }
