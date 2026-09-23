@@ -20,6 +20,7 @@
 /source/result/
 /dist/
 /outputs/
+/tests/
 
 # Python virtual environments, caches, and test output
 /.venv/
