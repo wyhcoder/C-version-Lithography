@@ -23,6 +23,7 @@ sudo apt install build-essential cmake libeigen3-dev libfftw3-dev \
 ```
 
 SRAF 独立宽度模式使用 `libcmaes`。系统中找不到该库时，CMake 会从项目固定的 Git 提交下载源码，因此第一次配置需要网络。
+CTM 的 L-BFGS 模式使用头文件库 LBFGS++，CMake 同样会在系统未安装时下载固定版本。
 
 自动绘图脚本需要 NumPy 和 Matplotlib。建议安装到项目虚拟环境：
 
@@ -54,6 +55,30 @@ cmake -S . -B build-release
 
 ```bash
 cd build-release
+```
+
+## CTM 优化
+
+`demo_CTM` 可用 `config.yaml` 的 `ctm` 段选择固定步长梯度下降或 L-BFGS：
+
+```yaml
+ctm:
+  optimizer: "lbfgs"           # gradient_descent / lbfgs
+  max_iteration: 50
+  learning_rate: 0.9            # 仅 gradient_descent 使用
+  lbfgs_history_size: 10       # 仅 lbfgs 使用
+  gradient_tolerance: 1.0e-2   # ||dPE/dtheta||_2 阈值；0 不设置正的梯度阈值
+```
+
+两种算法都优化相位变量 `theta`，并通过 `mask = (1 + cos(theta)) / 2` 生成灰度掩模。固定步长模式使用 `learning_rate` 更新 `theta`；L-BFGS 使用线搜索确定每步长度。两种模式都在梯度的整图 L2 范数不大于 `gradient_tolerance` 时停止，最多执行 `max_iteration` 轮。L-BFGS 日志中的 `eval` 包含线搜索试探点，因此可能多于迭代次数。
+
+在项目根目录构建，然后从构建目录运行：
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --target demo_CTM --parallel
+cd build-release
+./demo_CTM ../config.yaml
 ```
 
 ## 完整工作流

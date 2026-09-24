@@ -37,13 +37,14 @@ Eigen::MatrixXd Gradient::_backpropagate(
     const auto& Hf = _cache.H_k_frequence;
     const auto& ws = _cache.source_ws;
     const auto& sv = _cache.socs_vals;
-    const bool is_abbe = (K == static_cast<int>(ws.size()));
+    const bool use_socs = !sv.empty();
 
     if (dLdI.rows() != N || dLdI.cols() != N) {
         throw std::invalid_argument("Gradient: dLdI dimensions do not match cache");
     }
-    if (static_cast<int>(Hf.size()) < K ||
-        (!is_abbe && static_cast<int>(sv.size()) < K)) {
+    if (static_cast<int>(Hf.size()) != K ||
+        (use_socs && static_cast<int>(sv.size()) != K) ||
+        (!use_socs && ws.size() != K)) {
         throw std::invalid_argument("Gradient: optical kernel weights are incomplete");
     }
 
@@ -60,9 +61,10 @@ Eigen::MatrixXd Gradient::_backpropagate(
 
         #pragma omp for schedule(static)
         for (int k = 0; k < K; ++k) {
-            const double weight = is_abbe ? ws(k) : sv[k];
+            const double weight = use_socs ? sv[k] : ws(k);
 
-            local_buf = electric_field[k].conjugate().array() * dLdI.array();
+            // 复数伴随的输入是 E_k · dL/dI；内积本身会对它取共轭。
+            local_buf = electric_field[k].array() * dLdI.array();
 
             FFT::ifftshift_inplace(local_buf);
             FFT::to_fftw(local_buf, local_in);
@@ -98,28 +100,27 @@ Eigen::MatrixXd Gradient::_backpropagate(
 }
 
 // 梯度推导（链式法则）：
-//   L     = α · Σ (W - T)²              （像素误差能量）
-//   W     = σ(I)                         （光刻胶，σ 已蕴含在外面的 dW/dI 里）
-//   I(x)  = Σ_k |E_k(x)|² = Σ_k E_k · conj(E_k)
+//   L     = Σ (W - T)²                   （像素误差能量）
+//   W     = σ(α(I - threshold))          （光刻胶显影模型）
+//   I(x)  = Σ_k weight_k |E_k(x)|² / Σ source_ws
 //   E_k   = ifft( M_f · H_k )           （compute_aerial 里缓存的）
 //
-//   dL/dM(x) = 2α · Σ_k Re{ ifft( fft(conj(E_k)·dL/dI) · conj(H_k) ) }
+//   dL/dM(x) = 4α / Σ source_ws · Σ_k weight_k Re{ ifft( fft(E_k·dL/dI) · conj(H_k) ) }
 //   其中 dL/dI = (W - T) · W · (1 - W)
 //
-// 注：H_k_frequence 的 DC 在角点（与 FFT(M) 对齐），
-//     频域反传等价 rot90(H,2) → 直接用 H.conjugate()（偶尺寸严格、奇尺寸近似）
+// H_k_frequence 的 DC 在角点（与 FFT(M) 对齐）；伴随计算使用其复共轭。
 Eigen::MatrixXd Gradient::pe_gradient(
     const Eigen::MatrixXd& wafer_image,
     const Eigen::MatrixXd& target_image,
     const std::vector<Eigen::MatrixXcd>& electric_field)
 {
-    // dL/dI 中暂不含 PE 平方项的 2 和 sigmoid 的 alpha，
-    // 统一由 output_scale = 2*alpha 在反传末端乘入。
+    // dL/dI 中暂不含 PE 平方项的 2、强度 |E|² 的 2 和 sigmoid 的 alpha；
+    // 统一由 output_scale = 4*alpha 在反传末端乘入。
     Eigen::MatrixXd dLdI =
         (wafer_image - target_image).array() *
          wafer_image.array() * (1.0 - wafer_image.array());
 
-    return _backpropagate(dLdI, electric_field, 2.0 * _alpha);
+    return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
 }
 
 Eigen::MatrixXd Gradient::epe_gradient(
@@ -156,16 +157,17 @@ Eigen::MatrixXd Gradient::pe_gradient_with_penalty(
     // ── 2. 非主图形区域（target==0）显影惩罚 ──────────────────────────
     //    L_pen = β · Σ_{target==0} max(0, W - τ)²
     //    dL_pen/dW = 2β · max(0, W - τ)            (仅在 target==0 区域)
-    //    dW/dI     = W · (1 - W)                  (sigmoid 导数)
+    //    dW/dI     = α · W · (1 - W)              (sigmoid 导数)
+    // 公共的 4α 系数已含平方损失和 |E|² 导数的两个 2，因此这里只保留 β。
     Eigen::MatrixXd dLdI_pen =
-        2.0 * penalty *
+        penalty *
         (wafer_image.array() - penalty_threshold).cwiseMax(0.0) *
         wafer_image.array() * (1.0 - wafer_image.array());
     // 只在非主图形区域（target < 0.5）生效
     dLdI_pen.array() *= (target_image.array() < 0.5).cast<double>();
 
     Eigen::MatrixXd dLdI = dLdI_main + dLdI_pen;
-    return _backpropagate(dLdI, electric_field, 2.0 * _alpha);
+    return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
 }
 
 Eigen::MatrixXd Gradient::epe_gradient(

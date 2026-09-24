@@ -26,6 +26,14 @@ resist:
   threshold: 0.25
   alpha: 85
 
+ctm:
+  optimizer: "lbfgs"               # gradient_descent: 固定步长 / lbfgs: 自动线搜索
+  max_iteration: 100                 # 两种优化器共用的最大迭代次数
+  learning_rate: 0.9                # 仅 gradient_descent 使用
+  lbfgs_history_size: 10           # 仅 lbfgs 使用
+  gradient_tolerance: 0.3      # ||dPE/dtheta||_2 <= 此值时停止；0 不设置正的梯度阈值
+
+
 # MEEF 优化：路径均相对于项目根目录。
 meef:
   # 运行与输出
@@ -114,7 +122,7 @@ sraf_optimizer:
       mode: "full"                  # dose_only / defocus_only / full
 
   width_optimization:
-    mode: "independent"             # shared / independent
+    mode: "shared"             # shared / independent
     shared:
       min_half_width: 1.0
       max_half_width: 4.0

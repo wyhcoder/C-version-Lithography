@@ -85,7 +85,8 @@ namespace litho {
                     _imaging_result.wafer_image, _target_mask,
                     _penalty, _penalty_threshold);
             } else {
-                _pe = Loss::pe_loss(_imaging_result.wafer_image, _target_mask);
+                // _pe = Loss::pe_loss(_imaging_result.wafer_image, _target_mask);
+                _pe = Loss::pe_loss_with_penalty(_imaging_result.wafer_image, _target_mask, 1.0, 0.01);
             }
             std::cout << "--------iter: " << i << " --------pe: " << _pe << std::endl;
             if (_pe < min_error){

@@ -6,10 +6,13 @@
 #include "simulation_parameters.h"
 #include "lithography_simulator.h"
 #include <Eigen/Dense>
+#include <yaml-cpp/yaml.h>
+#include <cmath>
 #include <iostream>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 
 
@@ -35,15 +38,37 @@ int main(int argc, char** argv){
     std::cout << "Loading config: " << cfg_path << std::endl;
 
     SimulationParameters params;
+    std::string optimizer_method = "gradient_descent";
+    int max_iterations = 100;
+    double learning_rate = 0.9;
+    int lbfgs_history_size = 10;
+    double gradient_tolerance = 0.0;
     try {
         params = SimulationParameters::from_yaml(cfg_path);
+        const YAML::Node ctm = YAML::LoadFile(cfg_path)["ctm"];
+        if (ctm && !ctm.IsMap()) throw std::invalid_argument("ctm must be a YAML mapping");
+        if (ctm && ctm["optimizer"]) optimizer_method = ctm["optimizer"].as<std::string>();
+        if (ctm && ctm["max_iteration"]) max_iterations = ctm["max_iteration"].as<int>();
+        if (ctm && ctm["learning_rate"]) learning_rate = ctm["learning_rate"].as<double>();
+        if (ctm && ctm["lbfgs_history_size"]) lbfgs_history_size = ctm["lbfgs_history_size"].as<int>();
+        if (ctm && ctm["gradient_tolerance"]) gradient_tolerance = ctm["gradient_tolerance"].as<double>();
+        if (optimizer_method != "gradient_descent" && optimizer_method != "lbfgs") {
+            throw std::invalid_argument("ctm.optimizer must be gradient_descent or lbfgs");
+        }
+        if (max_iterations <= 0) throw std::invalid_argument("ctm.max_iteration must be positive");
+        if (!std::isfinite(learning_rate) || learning_rate <= 0.0) throw std::invalid_argument("ctm.learning_rate must be positive");
+        if (lbfgs_history_size <= 0) throw std::invalid_argument("ctm.lbfgs_history_size must be positive");
+        if (!std::isfinite(gradient_tolerance) || gradient_tolerance < 0.0) {
+            throw std::invalid_argument("ctm.gradient_tolerance must be non-negative");
+        }
     } catch (const std::exception& e) {
         std::cerr << "Failed to load config: " << e.what() << "\n"
                   << "Hint: run from project root, or pass path explicitly:\n"
                   << "      ./demo_CTM /absolute/path/to/config.yaml" << std::endl;
         return 1;
     }
-    std::cout << "Loaded config: " << std::endl;
+    std::cout << "CTM optimizer: " << optimizer_method << ", max iterations: " << max_iterations
+              << ", gradient tolerance: " << gradient_tolerance << std::endl;
     auto t0 = std::chrono::high_resolution_clock::now();
     LithographySimulator simulator(params);
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -61,8 +86,14 @@ int main(int argc, char** argv){
     SaveTxt::save_mat(simulator._source.get_source_map(), "System_result/source.txt");
     // CTM优化
     auto t_begin = std::chrono::high_resolution_clock::now();
-    CTM_Optimizer optimizer(simulator, cache, 100, 0.9);
-    Eigen::MatrixXd result= optimizer.optimize();
+    Eigen::MatrixXd result;
+    try {
+        CTM_Optimizer optimizer(simulator, cache, max_iterations, learning_rate, optimizer_method, lbfgs_history_size, gradient_tolerance);
+        result = optimizer.optimize();
+    } catch (const std::exception& e) {
+        std::cerr << "CTM optimization failed: " << e.what() << std::endl;
+        return 1;
+    }
     auto t_end = std::chrono::high_resolution_clock::now();
     std::cout << "Optimize time: " << std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_begin).count() * 0.001 << " s" << std::endl;
     // 成像

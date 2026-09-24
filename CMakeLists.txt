@@ -76,11 +76,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED HINTS /opt/homebrew/lib/cmake/opencv4)
 find_package(yaml-cpp REQUIRED HINTS /opt/homebrew/lib/cmake/yaml-cpp)
+include(FetchContent)
 
 # 优先使用系统安装的 libcmaes；找不到时下载固定提交，保证构建可复现。
 find_package(libcmaes CONFIG QUIET)
 if(NOT TARGET libcmaes::cmaes)
-    include(FetchContent)
     set(LIBCMAES_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(LIBCMAES_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
     set(LIBCMAES_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -93,6 +93,33 @@ if(NOT TARGET libcmaes::cmaes)
         GIT_TAG 6a53cd562c85dc6df3b8df317be3ecb415240c2d
     )
     FetchContent_MakeAvailable(libcmaes)
+endif()
+
+# LBFGS++ 是仅依赖 Eigen 的头文件库。优先使用系统安装版本；找不到时自动
+# 下载 v0.4.0 对应的固定提交，向 litho_core 提供 LBFGS.h/LBFGSB.h。
+find_package(lbfgspp CONFIG QUIET)
+if(NOT TARGET lbfgspp)
+    FetchContent_Declare(
+        lbfgspp
+        GIT_REPOSITORY https://github.com/yixuan/LBFGSpp.git
+        GIT_TAG c524a407fb85b74807f53de5a3ca2ddbcc164e54
+    )
+    FetchContent_GetProperties(lbfgspp)
+    if(NOT lbfgspp_POPULATED)
+        # 只获取头文件，不执行上游 CMake；其 v0.4.0 配置限定 Eigen 3，
+        # 会拒绝本项目当前使用的 Eigen 5，但头文件接口与 Eigen 5 兼容。
+        if(POLICY CMP0169)
+            cmake_policy(PUSH)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        FetchContent_Populate(lbfgspp)
+        if(POLICY CMP0169)
+            cmake_policy(POP)
+        endif()
+    endif()
+    add_library(lbfgspp INTERFACE)
+    target_include_directories(lbfgspp INTERFACE ${lbfgspp_SOURCE_DIR}/include)
+    target_link_libraries(lbfgspp INTERFACE Eigen3::Eigen)
 endif()
 
 # 当前环境没有统一使用 FFTW3 的 CMake imported target，因此分别查找：
@@ -179,6 +206,7 @@ target_link_libraries(litho_core PUBLIC
     ${OpenCV_LIBS}
     yaml-cpp::yaml-cpp
     libcmaes::cmaes
+    lbfgspp
 )
 
 # OpenMP::OpenMP_CXX 同时携带编译选项和链接库，例如 -fopenmp/libomp。
@@ -248,6 +276,10 @@ target_link_libraries(demo_msaa_cp litho_core)
 # SRAF 几何前处理和曲线半宽重建的独立回归测试。
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(test_ctm_optimizer tests/test_ctm_optimizer.cpp)
+    target_link_libraries(test_ctm_optimizer litho_core)
+    add_test(NAME ctm_optimizer COMMAND test_ctm_optimizer)
+
     add_executable(test_sraf_geometry tests/test_sraf_geometry.cpp)
     target_link_libraries(test_sraf_geometry litho_core)
     add_test(NAME sraf_geometry COMMAND test_sraf_geometry)

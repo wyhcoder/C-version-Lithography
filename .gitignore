@@ -20,7 +20,8 @@
 /source/result/
 /dist/
 /outputs/
-/tests/
+/tests/*
+!/tests/test_ctm_optimizer.cpp
 
 # Python virtual environments, caches, and test output
 /.venv/
