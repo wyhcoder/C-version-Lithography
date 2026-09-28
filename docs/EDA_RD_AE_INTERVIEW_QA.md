@@ -186,7 +186,7 @@ I(x,y) ~= sum_k lambda_k * |IFFT(M * K_k)|^2
 
 **参考回答：**
 
-SVD 中奇异值描述振幅算子在该模式上的尺度，而最终强度是复振幅模平方，因此强度权重对应 `sigma_k^2`。代码把这些值放在 `ImagingCache::socs_vals` 中。
+SVD 中奇异值描述振幅算子在该模式上的尺度，而最终强度是复振幅模平方，因此强度权重对应 `sigma_k^2`。代码把这些值放在 `ImagingCache::socs_eigenvalues` 中。
 
 ### Q13：怎样选择 SOCS 模态数？
 
@@ -205,7 +205,7 @@ SVD 中奇异值描述振幅算子在该模式上的尺度，而最终强度是�
 
 **参考回答：**
 
-`Imaging::compute()` 通过 `socs_vals` 是否为空区分：SOCS 模式为每个核保存一个非负特征值，Abbe 模式则使用 `source_ws`。它还检查核数量和权重数量是否一致。这比根据“核数是否等于光源点数”推断更稳健。
+`Imaging::compute()` 通过 `socs_eigenvalues` 是否为空区分：SOCS 模式为每个核保存一个非负特征值，Abbe 模式则使用 `source_ws`。它还检查核数量和权重数量是否一致。这比根据“核数是否等于光源点数”推断更稳健。
 
 需要注意，`PvbandComputer::_backpropagate()` 中仍有基于 `K == source point count` 的判断，这是代码审查时值得继续统一的地方。
 

@@ -114,9 +114,9 @@ Eigen::MatrixXd Source::_smooth_step(double width, const Eigen::MatrixXd& x) con
 const SourceMap& Source::compute_source_map(){
     // 1. 筛选频率坐标
     std::vector<double> ff_source_vec;
-    for (int i = 0; i < _params.frequence_coords.size(); i++){
-        if ( _params.frequence_coords(i) >= -2.0 && _params.frequence_coords(i) <= 2.0){
-            ff_source_vec.push_back(_params.frequence_coords(i));
+    for (int i = 0; i < _params.frequency_coords.size(); i++){
+        if ( _params.frequency_coords(i) >= -2.0 && _params.frequency_coords(i) <= 2.0){
+            ff_source_vec.push_back(_params.frequency_coords(i));
         }
     }
 

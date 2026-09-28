@@ -174,16 +174,16 @@ namespace litho {
         const int N = cache.N;
         const int K = static_cast<int>(electric_field.size());
         const double invN = 1.0 / (static_cast<double>(N) * N);
-        const auto& Hf = cache.H_k_frequence;
+        const auto& optical_kernels_frequency = cache.optical_kernels_frequency;
         const auto& ws = cache.source_ws;
-        const auto& sv = cache.socs_vals;
+        const auto& socs_eigenvalues = cache.socs_eigenvalues;
         const bool is_abbe = (K == static_cast<int>(ws.size()));
 
         if (dLdI.rows() != N || dLdI.cols() != N) {
             throw std::invalid_argument("PvbandComputer: dLdI dimensions do not match cache");
         }
-        if (static_cast<int>(Hf.size()) < K ||
-            (!is_abbe && static_cast<int>(sv.size()) < K)) {
+        if (static_cast<int>(optical_kernels_frequency.size()) < K ||
+            (!is_abbe && static_cast<int>(socs_eigenvalues.size()) < K)) {
             throw std::invalid_argument("PvbandComputer: optical kernels are incomplete");
         }
 
@@ -199,7 +199,7 @@ namespace litho {
 
             #pragma omp for schedule(static)
             for (int k = 0; k < K; ++k) {
-                const double weight = is_abbe ? ws(k) : sv[k];
+                const double weight = is_abbe ? ws(k) : socs_eigenvalues[k];
                 local_buf = electric_field[k].conjugate().array() * dLdI.array();
 
                 FFT::ifftshift_inplace(local_buf);
@@ -207,7 +207,7 @@ namespace litho {
                 fftw_execute_dft(_plan_fwd, local_in, local_out);
                 FFT::from_fftw(local_out, local_buf);
 
-                local_buf.array() *= Hf[k].conjugate().array();
+                local_buf.array() *= optical_kernels_frequency[k].conjugate().array();
 
                 FFT::to_fftw(local_buf, local_in);
                 fftw_execute_dft(_plan_inv, local_in, local_out);

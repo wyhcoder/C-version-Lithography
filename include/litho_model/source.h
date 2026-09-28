@@ -21,7 +21,7 @@ struct SourceParams {
     double n;
     double sigma_in;
     double sigma_out;
-    Eigen::MatrixXd frequence_coords;
+    Eigen::MatrixXd frequency_coords;
     int    upsample            = 10;
     double smoothing           = 0.0;
     double lobe_half_width_deg = 0.0;

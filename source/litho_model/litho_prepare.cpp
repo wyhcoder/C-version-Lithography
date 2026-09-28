@@ -27,8 +27,8 @@ LithoPrepare::LithoPrepare(const Grid& grid, const Pupil& pupil, const Source& s
     // _num_socs = use_socs;
 
     
-    // ── 2. 复光瞳 H(f) ──────────────────────────────────────────────────
-    _cache.H = pupil.get_pupil();
+    // ── 2. 原始复光瞳 P(f) ──────────────────────────────────────────────
+    _cache.pupil_frequency = pupil.get_pupil();
 
     // ── 3. 光源点 → 物理频率 (fs, gs) + 权重 ────────────────────────────
     //   f_max = NA / λ，用于归一化坐标 → 物理频率
@@ -48,7 +48,7 @@ LithoPrepare::LithoPrepare(const Grid& grid, const Pupil& pupil, const Source& s
     if (_use_socs) {
         _compute_socs_kernels();}
     else
-        {_compute_psf_vectors();}
+        {_compute_abbe_kernels();}
     
 }
 
@@ -145,12 +145,12 @@ void LithoPrepare::_extract_source_points(const SourceMap& smap,
 
 
 
-// 为每个光源点预计算频移光瞳 H(f + f_s)（频域，DC 在角点，与 FFT(mask) 对齐）：
-//   shift_pupil_centered(r,c) = H(r + dr, c + dc)   (双线性插值，DC 居中)
-//   psf_vectors[i] = fftshift(shift_pupil_centered)  ← DC 搬到角点，直接可用
+// 为每个光源点预计算频移光瞳 P(f + f_s)（频域，DC 在角点，与 FFT(mask) 对齐）：
+//   shifted_pupil(r,c) = P(r + dr, c + dc)   (双线性插值，DC 居中)
+//   abbe_kernels_frequency[i] = ifftshift(shifted_pupil)  ← DC 搬到角点，直接可用
 //
 // 这样 compute_aerial_abbe 里可以省掉一次 FFT 和一次拷贝（直接乘）
-void LithoPrepare::_compute_psf_vectors() {
+void LithoPrepare::_compute_abbe_kernels() {
     if (_is_shift) return;   // 幂等保护
 
     const int N  = _cache.N;
@@ -160,16 +160,16 @@ void LithoPrepare::_compute_psf_vectors() {
     const double dfx = _cache.Fx_2d(0, 1) - _cache.Fx_2d(0, 0);
     const double dfy = _cache.Fy_2d(1, 0) - _cache.Fy_2d(0, 0);
 
-    const auto& H  = _cache.H;
+    const auto& pupil_frequency = _cache.pupil_frequency;
     const auto& fs = _cache.source_fs_phys;
     const auto& gs = _cache.source_gs_phys;
 
-    _cache.psf_vectors_spatial.resize(Ns);
-    _cache.psf_vectors_frequence.resize(Ns);
+    _cache.abbe_kernels_spatial.resize(Ns);
+    _cache.abbe_kernels_frequency.resize(Ns);
     // 匿名函数
-    auto H_at = [&](int r, int c) -> std::complex<double> {
+    auto pupil_at = [&](int r, int c) -> std::complex<double> {
         if (r < 0 || r >= N || c < 0 || c >= N) return {0.0, 0.0};
-        return H(r, c);
+        return pupil_frequency(r, c);
     };
 
     for (int i = 0; i < Ns; ++i) {
@@ -181,42 +181,42 @@ void LithoPrepare::_compute_psf_vectors() {
         double tc = dc - c0;
         double tr = dr - r0;
 
-        Eigen::MatrixXcd shift_pupil(N, N);
+        Eigen::MatrixXcd shifted_pupil(N, N);
 
-        // H(f + f_s) 双线性插值（DC 在中心）
+        // P(f + f_s) 双线性插值（DC 在中心）
         for (int r = 0; r < N; ++r) {
             for (int c = 0; c < N; ++c) {
                 int ra = r + r0, rb = r + r0 + 1;
                 int ca = c + c0, cb = c + c0 + 1;
-                shift_pupil(r, c) =
-                    (1 - tr) * (1 - tc) * H_at(ra, ca) +
-                    (1 - tr) *      tc  * H_at(ra, cb) +
-                         tr  * (1 - tc) * H_at(rb, ca) +
-                         tr  *      tc  * H_at(rb, cb);
+                shifted_pupil(r, c) =
+                    (1 - tr) * (1 - tc) * pupil_at(ra, ca) +
+                    (1 - tr) *      tc  * pupil_at(ra, cb) +
+                         tr  * (1 - tc) * pupil_at(rb, ca) +
+                         tr  *      tc  * pupil_at(rb, cb);
             }
         }
 
-        // 与 Python 对齐: H_k = fftshift(ifft2(ifftshift(shift_pupil)))
+        // 与 Python 对齐：Abbe 空间核 = fftshift(ifft2(ifftshift(shifted_pupil)))
         // 1) ifftshift: DC 从中心 -> 角点，供 ifft2 使用
-        FFT::ifftshift_inplace(shift_pupil);  // DC 从中心 -> 角点
-        FFT::to_fftw(shift_pupil, _fft_in);
+        FFT::ifftshift_inplace(shifted_pupil);  // DC 从中心 -> 角点
+        FFT::to_fftw(shifted_pupil, _fft_in);
         fftw_execute_dft(_ifft_plan, _fft_in, _fft_out);
 
-        Eigen::MatrixXcd H_spatial(N, N);
-        FFT::from_fftw(_fft_out, H_spatial);
-        H_spatial *= 1.0 / (double(N) * double(N)); // ifft 归一化
+        Eigen::MatrixXcd abbe_kernel_spatial(N, N);
+        FFT::from_fftw(_fft_out, abbe_kernel_spatial);
+        abbe_kernel_spatial *= 1.0 / (double(N) * double(N)); // ifft 归一化
         // 2) fftshift: 空域结果居中（真正的 PSF，DC 峰值在图像中心）
-        FFT::fftshift_inplace(H_spatial); // DC 从角点 -> 中心
-        _cache.psf_vectors_spatial[i] = H_spatial;
+        FFT::fftshift_inplace(abbe_kernel_spatial); // DC 从角点 -> 中心
+        _cache.abbe_kernels_spatial[i] = abbe_kernel_spatial;
 
-        // 频域核 = ifftshift(shift_pupil)（DC 居中 → 角点）
+        // 频域核 = ifftshift(shifted_pupil)（DC 居中 → 角点）
         // 成像时 _MASK 也是 DC 在角点（见 imaging.cpp:56），两者才能逐元素相乘
         // 注: fft2(ifft2c(X)) 往返等价于 ifftshift(X)，无需再做 FFT
-        Eigen::MatrixXcd H_freq = shift_pupil;
-        FFT::ifftshift_inplace(H_freq);           // DC 居中 → 角点
-        _cache.psf_vectors_frequence[i] = std::move(H_freq);
+        Eigen::MatrixXcd abbe_kernel_frequency = shifted_pupil;
+        FFT::ifftshift_inplace(abbe_kernel_frequency);           // DC 居中 → 角点
+        _cache.abbe_kernels_frequency[i] = std::move(abbe_kernel_frequency);
     }
-    _cache.H_k_frequence = _cache.psf_vectors_frequence;
+    _cache.optical_kernels_frequency = _cache.abbe_kernels_frequency;
 
     _is_shift = true;
 }
@@ -229,18 +229,18 @@ void LithoPrepare::_compute_socs_kernels(){
     const double dfx = _cache.Fx_2d(0, 1) - _cache.Fx_2d(0, 0);
     const double dfy = _cache.Fy_2d(1, 0) - _cache.Fy_2d(0, 0);
 
-    const auto& H  = _cache.H;
+    const auto& pupil_frequency = _cache.pupil_frequency;
     const auto& fs = _cache.source_fs_phys;
     const auto& gs = _cache.source_gs_phys;
     const auto& ws = _cache.source_ws;
 
-    const int Nr = (int)H.rows();
-    const int Nc = (int)H.cols();
+    const int Nr = (int)pupil_frequency.rows();
+    const int Nc = (int)pupil_frequency.cols();
     Eigen::MatrixXcd A(Nr * Nc, Ns);
     // lambda函数
-    auto H_at = [&](int r, int c) -> std::complex<double> {
+    auto pupil_at = [&](int r, int c) -> std::complex<double> {
         if (r < 0 || r >= N || c < 0 || c >= N) return {0.0, 0.0};
-        return H(r, c);
+        return pupil_frequency(r, c);
     };
 
     #pragma omp parallel for schedule(static)
@@ -253,23 +253,23 @@ void LithoPrepare::_compute_socs_kernels(){
         double tc = dc - c0;
         double tr = dr - r0;
 
-        Eigen::MatrixXcd shift_pupil(N, N);
+        Eigen::MatrixXcd shifted_pupil(N, N);
 
-        // H(f + f_s) 双线性插值（DC 在中心）
+        // P(f + f_s) 双线性插值（DC 在中心）
         for (int r = 0; r < N; ++r) {
             for (int c = 0; c < N; ++c) {
                 int ra = r + r0, rb = r + r0 + 1;
                 int ca = c + c0, cb = c + c0 + 1;
-                shift_pupil(r, c) =
-                    (1 - tr) * (1 - tc) * H_at(ra, ca) +
-                    (1 - tr) *      tc  * H_at(ra, cb) +
-                         tr  * (1 - tc) * H_at(rb, ca) +
-                         tr  *      tc  * H_at(rb, cb);
+                shifted_pupil(r, c) =
+                    (1 - tr) * (1 - tc) * pupil_at(ra, ca) +
+                    (1 - tr) *      tc  * pupil_at(ra, cb) +
+                         tr  * (1 - tc) * pupil_at(rb, ca) +
+                         tr  *      tc  * pupil_at(rb, cb);
             }
         }
 
         const double w_scale = std::sqrt(ws(i));
-        Eigen::Map<const Eigen::VectorXcd> flat(shift_pupil.data(), Nr * Nc);
+        Eigen::Map<const Eigen::VectorXcd> flat(shifted_pupil.data(), Nr * Nc);
         A.col(i) = w_scale * flat;
     }
 
@@ -283,8 +283,8 @@ void LithoPrepare::_compute_socs_kernels(){
     const int K_request = _num_socs;
     const int K_use = std::min(K_request > 0 ? K_request : Ns, (int)S.size());
 
-    _cache.socs_vals.resize(K_use);
-    _cache.socs_kernels_frequence.resize(K_use);
+    _cache.socs_eigenvalues.resize(K_use);
+    _cache.socs_kernels_frequency.resize(K_use);
     _cache.socs_kernels_spatial.resize(K_use);
     // 统计能量占比
     double total_energy = 0.0, top_energy = 0.0;
@@ -305,8 +305,8 @@ void LithoPrepare::_compute_socs_kernels(){
         #pragma omp for reduction(+:top_energy) schedule(static)
         
         for (int k = 0; k < K_use; ++k){
-            _cache.socs_vals[k] = S(k) * S(k);          // λ_k = σ_k²
-            top_energy += _cache.socs_vals[k];
+            _cache.socs_eigenvalues[k] = S(k) * S(k);   // λ_k = σ_k²
+            top_energy += _cache.socs_eigenvalues[k];
             Eigen::Map<const Eigen::MatrixXcd> kernel_freq(
             U.col(k).data(), N, N);
             Eigen::MatrixXcd kernel = kernel_freq;
@@ -322,7 +322,7 @@ void LithoPrepare::_compute_socs_kernels(){
             
             Eigen::MatrixXcd kernel_fft = kernel_freq;
             FFT::ifftshift_inplace(kernel_fft);          // DC 居中 → 角点
-            _cache.socs_kernels_frequence[k] = std::move(kernel_fft);
+            _cache.socs_kernels_frequency[k] = std::move(kernel_fft);
 
         }
         fftw_free(local_in);
@@ -331,8 +331,8 @@ void LithoPrepare::_compute_socs_kernels(){
     }
     // 串行版本的实现
     // for (int k = 0; k < K_use; ++k) {
-    //     _cache.socs_vals[k] = S(k) * S(k);          // λ_k = σ_k²
-    //     top_energy += _cache.socs_vals[k];
+    //     _cache.socs_eigenvalues[k] = S(k) * S(k);   // λ_k = σ_k²
+    //     top_energy += _cache.socs_eigenvalues[k];
 
     //     // U[:,k] reshape 为 N×N（列优先，居中频域核）
     //     Eigen::Map<const Eigen::MatrixXcd> kernel_freq(
@@ -353,10 +353,10 @@ void LithoPrepare::_compute_socs_kernels(){
     //     // 注: fft2(ifft2c(X)) 往返等价于 ifftshift(X)，无需再做 2 次 FFT
     //     Eigen::MatrixXcd kernel_fft = kernel_freq;
     //     FFT::ifftshift_inplace(kernel_fft);          // DC 居中 → 角点
-    //     _cache.socs_kernels_frequence[k] = std::move(kernel_fft);
+    //     _cache.socs_kernels_frequency[k] = std::move(kernel_fft);
     // }
-    _cache.H_K_spatial = _cache.socs_kernels_spatial;        // 共享引用（无拷贝）
-    _cache.H_k_frequence = _cache.socs_kernels_frequence;
+    _cache.optical_kernels_spatial = _cache.socs_kernels_spatial;
+    _cache.optical_kernels_frequency = _cache.socs_kernels_frequency;
     std::cout << "SOCS: " << Ns << " source pts → top " << K_use
               << " kernels capture "
               << (100.0 * top_energy / total_energy) << "% energy"

@@ -62,8 +62,8 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
                                 double alpha) {
     const int N = _cache.N;
     const auto& source_weights = _cache.source_ws;
-    const auto& kernels_frequency = _cache.H_k_frequence;
-    const auto& socs_values = _cache.socs_vals;
+    const auto& kernels_frequency = _cache.optical_kernels_frequency;
+    const auto& socs_eigenvalues = _cache.socs_eigenvalues;
     const int kernel_count = static_cast<int>(kernels_frequency.size());
     // 防御性代码
     if (mask.rows() != N || mask.cols() != N) {
@@ -76,9 +76,9 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
         throw std::invalid_argument("Imaging: no optical kernels available");
     }
 
-    // Abbe 模式不生成 socs_vals；SOCS 模式为每个相干核保存一个特征值。
-    const bool use_socs = !socs_values.empty();
-    if (use_socs && static_cast<int>(socs_values.size()) != kernel_count) {
+    // Abbe 模式不生成 SOCS 特征值；SOCS 模式为每个相干核保存一个特征值。
+    const bool use_socs = !socs_eigenvalues.empty();
+    if (use_socs && static_cast<int>(socs_eigenvalues.size()) != kernel_count) {
         throw std::invalid_argument("Imaging: SOCS kernel/value counts do not match");
     }
     if (!use_socs && source_weights.size() != kernel_count) {
@@ -92,7 +92,7 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
         throw std::invalid_argument(
             "Imaging: source weights must be finite, nonnegative, and have a positive sum");
     }
-    for (double value : socs_values) {
+    for (double value : socs_eigenvalues) {
         if (!std::isfinite(value) || value < 0.0) {
             throw std::invalid_argument(
                 "Imaging: SOCS values must be finite and nonnegative");
@@ -113,9 +113,9 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
     // 掩模频谱只计算一次，之后与每个 Abbe/SOCS 频域核逐元素相乘。
     Eigen::MatrixXcd mask_complex = mask.cast<std::complex<double>>();
     FFT::ifftshift_inplace(mask_complex);  // DC 从中心移到角点
-    FFT::to_fftw(mask_complex, _fft_in);
+    FFT::to_fftw(mask_complex, _fft_in);   // 变成fftw需要的数据形式
     fftw_execute_dft(_plan_fwd, _fft_in, _fft_out);
-    FFT::from_fftw(_fft_out, _mask_frequency);
+    FFT::from_fftw(_fft_out, _mask_frequency); // 变成eigen矩阵的数据形式
 
     Eigen::MatrixXd aerial_image = Eigen::MatrixXd::Zero(N, N);
 
@@ -154,7 +154,7 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
 
     // 固定按 k 顺序累加，保证单线程和多线程采用相同的浮点求和顺序。
     for (int k = 0; k < kernel_count; ++k) {
-        const double weight = use_socs ? socs_values[k] : source_weights(k);
+        const double weight = use_socs ? socs_eigenvalues[k] : source_weights(k);
         const Eigen::MatrixXcd& electric_field = _electric_field[k];
         aerial_image.array() += weight *
             (electric_field.real().array().square() +
@@ -175,8 +175,8 @@ Eigen::MatrixXd Imaging::compute_aerial_directional_derivative(
     const std::vector<Eigen::MatrixXcd>& baseline_electric_field) {
     const int N = _cache.N;
     const auto& source_weights = _cache.source_ws;
-    const auto& kernels_frequency = _cache.H_k_frequence;
-    const auto& socs_values = _cache.socs_vals;
+    const auto& kernels_frequency = _cache.optical_kernels_frequency;
+    const auto& socs_eigenvalues = _cache.socs_eigenvalues;
     const int kernel_count = static_cast<int>(kernels_frequency.size());
 
     if (mask_direction.rows() != N || mask_direction.cols() != N ||
@@ -189,8 +189,8 @@ Eigen::MatrixXd Imaging::compute_aerial_directional_derivative(
             "Imaging: baseline electric-field count does not match kernels");
     }
 
-    const bool use_socs = !socs_values.empty();
-    if ((use_socs && static_cast<int>(socs_values.size()) != kernel_count) ||
+    const bool use_socs = !socs_eigenvalues.empty();
+    if ((use_socs && static_cast<int>(socs_eigenvalues.size()) != kernel_count) ||
         (!use_socs && source_weights.size() != kernel_count)) {
         throw std::invalid_argument(
             "Imaging: optical derivative weights do not match kernels");
@@ -227,7 +227,7 @@ Eigen::MatrixXd Imaging::compute_aerial_directional_derivative(
         local_temp *= inverse_element_count;
         FFT::fftshift_inplace(local_temp);
 
-        const double weight = use_socs ? socs_values[k] : source_weights(k);
+        const double weight = use_socs ? socs_eigenvalues[k] : source_weights(k);
         // I = sum_k lambda_k |E_k|^2 / W，故
         // dI = 2 sum_k lambda_k Re(conj(E_k) dE_k) / W。
         aerial_direction.array() +=

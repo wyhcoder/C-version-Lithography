@@ -34,16 +34,16 @@ Eigen::MatrixXd Gradient::_backpropagate(
     const int N = _cache.N;
     const int K = static_cast<int>(electric_field.size());
     const double invN = 1.0 / (static_cast<double>(N) * N);
-    const auto& Hf = _cache.H_k_frequence;
+    const auto& optical_kernels_frequency = _cache.optical_kernels_frequency;
     const auto& ws = _cache.source_ws;
-    const auto& sv = _cache.socs_vals;
-    const bool use_socs = !sv.empty();
+    const auto& socs_eigenvalues = _cache.socs_eigenvalues;
+    const bool use_socs = !socs_eigenvalues.empty();
 
     if (dLdI.rows() != N || dLdI.cols() != N) {
         throw std::invalid_argument("Gradient: dLdI dimensions do not match cache");
     }
-    if (static_cast<int>(Hf.size()) != K ||
-        (use_socs && static_cast<int>(sv.size()) != K) ||
+    if (static_cast<int>(optical_kernels_frequency.size()) != K ||
+        (use_socs && static_cast<int>(socs_eigenvalues.size()) != K) ||
         (!use_socs && ws.size() != K)) {
         throw std::invalid_argument("Gradient: optical kernel weights are incomplete");
     }
@@ -61,7 +61,7 @@ Eigen::MatrixXd Gradient::_backpropagate(
 
         #pragma omp for schedule(static)
         for (int k = 0; k < K; ++k) {
-            const double weight = use_socs ? sv[k] : ws(k);
+            const double weight = use_socs ? socs_eigenvalues[k] : ws(k);
 
             // 复数伴随的输入是 E_k · dL/dI；内积本身会对它取共轭。
             local_buf = electric_field[k].array() * dLdI.array();
@@ -71,7 +71,7 @@ Eigen::MatrixXd Gradient::_backpropagate(
             fftw_execute_dft(_plan_fwd, local_in, local_out);
             FFT::from_fftw(local_out, local_buf);
 
-            local_buf.array() *= Hf[k].conjugate().array();
+            local_buf.array() *= optical_kernels_frequency[k].conjugate().array();
 
             FFT::to_fftw(local_buf, local_in);
             fftw_execute_dft(_plan_inv, local_in, local_out);
@@ -103,12 +103,12 @@ Eigen::MatrixXd Gradient::_backpropagate(
 //   L     = Σ (W - T)²                   （像素误差能量）
 //   W     = σ(α(I - threshold))          （光刻胶显影模型）
 //   I(x)  = Σ_k weight_k |E_k(x)|² / Σ source_ws
-//   E_k   = ifft( M_f · H_k )           （compute_aerial 里缓存的）
+//   E_k   = ifft( M_f · K_k )           （compute_aerial 里缓存的光学核）
 //
-//   dL/dM(x) = 4α / Σ source_ws · Σ_k weight_k Re{ ifft( fft(E_k·dL/dI) · conj(H_k) ) }
+//   dL/dM(x) = 4α / Σ source_ws · Σ_k weight_k Re{ ifft( fft(E_k·dL/dI) · conj(K_k) ) }
 //   其中 dL/dI = (W - T) · W · (1 - W)
 //
-// H_k_frequence 的 DC 在角点（与 FFT(M) 对齐）；伴随计算使用其复共轭。
+// optical_kernels_frequency 的 DC 在角点（与 FFT(M) 对齐）；伴随计算使用其复共轭。
 Eigen::MatrixXd Gradient::pe_gradient(
     const Eigen::MatrixXd& wafer_image,
     const Eigen::MatrixXd& target_image,

@@ -23,7 +23,7 @@ SourceParams LithographySimulator::_make_source_params(const SimulationParameter
     sp.n             = p.optics.refractive_index;
     sp.sigma_in      = p.source.sigma_in;
     sp.sigma_out     = p.source.sigma_out;
-    sp.frequence_coords = fx;
+    sp.frequency_coords = fx;
     sp.upsample      = 10;
     sp.smoothing     = 0;
     return sp;

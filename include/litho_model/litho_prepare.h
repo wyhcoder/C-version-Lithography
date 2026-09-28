@@ -26,7 +26,7 @@ struct ImagingCache {
     Eigen::MatrixXd Fy_2d;             // 频率 fy [N×N], cycles/nm
 
     // ── 光瞳函数 ───────────────────────────────────
-    Eigen::MatrixXcd H;                // 复光瞳 P(fx, fy) [N×N]
+    Eigen::MatrixXcd pupil_frequency;  // 原始复光瞳 P(fx, fy) [N×N]
 
     // ── 光源采样点（一维展开，仅非零点）────────────
     Eigen::VectorXd source_fs_phys;    // 物理频率 fs [Ns], cycles/nm
@@ -34,16 +34,16 @@ struct ImagingCache {
     Eigen::VectorXd source_ws;         // 权重 [Ns]，总和 ≈ 1
     Eigen::VectorXd source_no_ws;      // 无权重 [Ns]
 
-    //光瞳频移后的 PSF vector（每个光源点一张 N×N 复矩阵）
-    std::vector<Eigen::MatrixXcd> psf_vectors_frequence;
-    std::vector<Eigen::MatrixXcd> psf_vectors_spatial;
-    //socs计算核函数
-    std::vector<double> socs_vals;
-    std::vector<Eigen::MatrixXcd> socs_kernels_frequence;
+    // Abbe 模式：每个光源点对应的频移光瞳和空间域 PSF。
+    std::vector<Eigen::MatrixXcd> abbe_kernels_frequency;
+    std::vector<Eigen::MatrixXcd> abbe_kernels_spatial;
+    // SOCS 模式：TCC/SVD 得到的特征值和相干模态核。
+    std::vector<double> socs_eigenvalues;
+    std::vector<Eigen::MatrixXcd> socs_kernels_frequency;
     std::vector<Eigen::MatrixXcd> socs_kernels_spatial;
-    //统一名称方便后续求导
-    std::vector<Eigen::MatrixXcd> H_K_spatial;
-    std::vector<Eigen::MatrixXcd> H_k_frequence;
+    // 统一核缓存：前向/反传读取频域核；空间域缓存当前仅由 SOCS 准备路径填充。
+    std::vector<Eigen::MatrixXcd> optical_kernels_spatial;
+    std::vector<Eigen::MatrixXcd> optical_kernels_frequency;
 };
 
 class LithoPrepare {
@@ -59,9 +59,9 @@ private:
                                 double f_max = 1.0,
                                 double min_weight = 1e-8);
     
-    // 预计算每个光源点对应的频移光瞳的 IFFT (= 频移 PSF)
+    // 预计算 Abbe 模式下每个光源点对应的频移光瞳核
     // 所有输入已存在 _cache，无需重复传参
-    void _compute_psf_vectors();
+    void _compute_abbe_kernels();
     void _compute_socs_kernels();
 
     ImagingCache _cache;
