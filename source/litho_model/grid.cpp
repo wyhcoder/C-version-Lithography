@@ -1,24 +1,16 @@
 #include "grid.h"
 
 namespace litho {
+Grid::Grid(int grid_size_pixel, double pixel_size_nm, double NA, double wavelength)
+    : _pixel_size_nm(pixel_size_nm), _grid_size(grid_size_pixel) {
+    const int N = _grid_size;
+    const double dx = _pixel_size_nm;
 
-
-// ---- 构造函数：初始化后直接算好 _grid_coords ----
-Grid::Grid(int row_mask_size, double pixel_size_nm, double NA, double wavelength)
-    : _pixel_size_nm(pixel_size_nm)
-    , _pitch_base_size()
-{
-    _pitch_base_size  = _get_bit_ceil(row_mask_size); // 2^k
-    _pitch = _pitch_base_size * _pixel_size_nm; // 基础pitch，单位nm
-    _grid_size = _pitch_base_size + 1; // grid size奇数
-    
-    int N = _grid_size;  
-    double dx = _pixel_size_nm;
-
-    // 空间坐标
+    // 像素中心 = 左边界 -N*dx/2 + (i+0.5)*dx，与 CUDA 的几何中心约定一致。
+    // i 为局部像素索引 [0,N)；偶数 N 无零坐标采样点，奇数 N 的中心像素坐标为零。
     Eigen::VectorXd coord(N);
     for (int i = 0; i < N; ++i)
-        coord(i) = (static_cast<double>(i) - N * 0.5) * dx;
+        coord(i) = (static_cast<double>(i) - (N - 1) * 0.5) * dx;
 
     _grid_coords.x.resize(N, N);
     _grid_coords.y.resize(N, N);
@@ -29,24 +21,10 @@ Grid::Grid(int row_mask_size, double pixel_size_nm, double NA, double wavelength
         }
     }
 
-    // 频率轴
-
-    _norm_pitch = _pitch * NA / wavelength;
-    double normalized_frequency_step = 1 / _norm_pitch;
-
-    // 这个是已经归一化的频率轴
-    _grid_coords.Fx_1d = (Eigen::VectorXd::LinSpaced(N, -(N-1)/2, (N-1)/2)).array() * normalized_frequency_step ;
-    _grid_coords.Fy_1d = (Eigen::VectorXd::LinSpaced(N, -(N-1)/2, (N-1)/2)).array() * normalized_frequency_step ;
-
-
-    // _grid_coords.Fx_1d = fftF();
-    // _grid_coords.Fy_1d = fftF();
-    // double f_max = NA / wavelength;
-    // _grid_coords.Fx_1d = _grid_coords.Fx_1d.array() / f_max;
-    // _grid_coords.Fy_1d = _grid_coords.Fy_1d.array() / f_max;
-
-
-
+    // FFT 周期长度为 N*dx；奇偶尺寸都按实际 N 生成频率，随后归一化到 NA/λ。
+    // 空间原点位于像素间不影响零频存在；偶数频率轴的端点应保留 FFT 的非对称排列。
+    _grid_coords.Fx_1d = fftF().array() / (NA / wavelength);
+    _grid_coords.Fy_1d = _grid_coords.Fx_1d;
     _grid_coords.Fx_2d.resize(N, N);
     _grid_coords.Fy_2d.resize(N, N);
     for (int i = 0; i < N; ++i) {
@@ -58,26 +36,15 @@ Grid::Grid(int row_mask_size, double pixel_size_nm, double NA, double wavelength
 }
 
 Eigen::VectorXd Grid::fftF() const {
-    int    N  = _grid_size;
-    double dx = _pixel_size_nm;
+    const int N = _grid_size;
+    const double dx = _pixel_size_nm;
     Eigen::VectorXd freq(N);
     const double df = 1.0 / (N * dx);
+    // 整数频率编号 i-N/2：偶数 N 为 [-N/2,N/2)，奇数 N 为 [-(N-1)/2,(N-1)/2]。
     for (int i = 0; i < N; ++i) {
-        freq(i) = (static_cast<double>(i) - N * 0.5) * df;
+        freq(i) = (i - N / 2) * df;
     }
     return freq;
 }
-
-int Grid::_get_bit_ceil(int size){
-    if (size <= 1) return 1;
-    size--;
-    size |= size >> 1;
-    size |= size >> 2;
-    size |= size >> 4;
-    size |= size >> 8;
-    size |= size >> 16;
-    return size + 1;
-}
-
 
 }  // namespace litho

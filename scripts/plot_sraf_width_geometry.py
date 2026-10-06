@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Plot SRAF width-optimization results as pre-rasterization geometry.
+"""Plot shared or independent SRAF widths as pre-rasterization geometry.
 
-The default inputs are the current outputs/sraf_optimizer_init files.  The
-figure combines the target contour, main-mask periodic B-spline, SRAF skeleton
-control points, fitted SRAF center curves (including separate graph edges),
-and bands with the optimized widths.
+The default shared mode reads the best result from shared_width_history.csv.
+Independent mode reads optimized_independent_widths.csv.  The figure combines
+the target contour, main-mask periodic B-spline, SRAF skeleton control points,
+fitted SRAF center curves (including separate graph edges), and bands with the
+optimized widths.
 All coordinates and widths are expressed in pixels.
 """
 
@@ -216,6 +217,33 @@ def load_independent_widths(path: Path) -> list[SrafWidth]:
     if any(width.sraf_index != index for index, width in enumerate(widths)):
         raise ValueError(f"SRAF indices in {path} are not contiguous from zero")
     return widths
+
+
+def load_shared_widths(path: Path, centerlines: list[SrafCenterline]) -> list[SrafWidth]:
+    """Load the minimum-cost shared half width and assign it to every SRAF."""
+    if not path.is_file():
+        raise FileNotFoundError(f"shared-width history file not found: {path}")
+
+    records: list[tuple[float, float]] = []
+    with path.open(newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        required = {"half_width", "cost"}
+        if reader.fieldnames is None or not required.issubset(reader.fieldnames):
+            raise ValueError(f"unexpected columns in {path}")
+        for row in reader:
+            half_width = float(row["half_width"])
+            cost = float(row["cost"])
+            if half_width < 0.0 or not math.isfinite(half_width) or not math.isfinite(cost):
+                raise ValueError(f"invalid shared-width record in {path}")
+            records.append((cost, half_width))
+
+    if not records:
+        raise ValueError(f"no shared-width records found in {path}")
+    optimized_half_width = min(records, key=lambda record: record[0])[1]
+    return [
+        SrafWidth(index, centerline.component_id, optimized_half_width, optimized_half_width)
+        for index, centerline in enumerate(centerlines)
+    ]
 
 
 def validate_component_mapping(
@@ -436,6 +464,7 @@ def plot_geometry(
     result_dir: Path,
     target_mask_path: Path,
     output_path: Path,
+    width_mode: str,
     main_samples: int,
     sraf_sample_spacing: float,
 ) -> tuple[int, int, int, float, float]:
@@ -448,7 +477,11 @@ def plot_geometry(
         periodic_uniform_bspline(controls, main_samples) for controls in main_controls_yx
     ]
     centerlines = load_sraf_centerlines(result_dir / "sraf_control_points_yx.txt")
-    widths = load_independent_widths(result_dir / "optimized_independent_widths.csv")
+    widths = (
+        load_shared_widths(result_dir / "shared_width_history.csv", centerlines)
+        if width_mode == "shared"
+        else load_independent_widths(result_dir / "optimized_independent_widths.csv")
+    )
     validate_component_mapping(centerlines, widths)
     fitted_graph_edges = load_fitted_graph_edges(result_dir / "sraf_fitted_graph_edges_yx.txt")
     graph_path = result_dir / "sraf_graph_edges_yx.txt"
@@ -523,7 +556,8 @@ def plot_geometry(
             zorder=7,
         )
 
-    axis.set_title("Optimized independent SRAF widths (parametric geometry)")
+    title_mode = "shared SRAF width" if width_mode == "shared" else "independent SRAF widths"
+    axis.set_title(f"Optimized {title_mode} (parametric geometry)")
     axis.set_xlabel("x (pixel)")
     axis.set_ylabel("y (pixel)")
     axis.set_aspect("equal", adjustable="box")
@@ -583,6 +617,12 @@ def parse_args() -> argparse.Namespace:
         help="target mask used only to extract its contour",
     )
     parser.add_argument(
+        "--width-mode",
+        choices=("shared", "independent"),
+        default="shared",
+        help="shared reads shared_width_history.csv; independent reads optimized_independent_widths.csv",
+    )
+    parser.add_argument(
         "--main-samples",
         type=int,
         default=200,
@@ -609,17 +649,19 @@ def main() -> None:
     output_path = (
         args.output.resolve()
         if args.output
-        else result_dir / "optimized_independent_parametric_geometry.png"
+        else result_dir / f"optimized_{args.width_mode}_parametric_geometry.png"
     )
     main_count, sraf_count, graph_edge_count, minimum_width, maximum_width = plot_geometry(
         result_dir,
         target_mask,
         output_path,
+        args.width_mode,
         args.main_samples,
         args.sraf_sample_spacing,
     )
     print(f"result directory   : {result_dir}")
     print(f"target mask        : {target_mask}")
+    print(f"width mode         : {args.width_mode}")
     print(f"main contours      : {main_count}")
     print(f"SRAF center curves : {sraf_count}")
     print(f"fitted graph edges : {graph_edge_count}")

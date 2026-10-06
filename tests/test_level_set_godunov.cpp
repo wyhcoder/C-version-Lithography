@@ -74,20 +74,25 @@ void test_godunov_at_one_dimensional_extremum() {
             minimum(i, j) = std::abs(j - center);
         }
     }
+    const Eigen::MatrixXd maximum = -minimum;
 
     const Eigen::MatrixXd positive_speed = Eigen::MatrixXd::Ones(rows, cols);
     const Eigen::MatrixXd negative_speed = -positive_speed;
-    const auto expanding = litho::LevelSetUtils::evolve_normal_WENO_godunov(
-        minimum, positive_speed, 1.0, 1.0);
-    const auto contracting = litho::LevelSetUtils::evolve_normal_WENO_godunov(
-        minimum, negative_speed, 1.0, 1.0);
+    const auto minimum_positive = litho::LevelSetUtils::evolve_normal_WENO_godunov(minimum, positive_speed, 1.0, 1.0);
+    const auto minimum_negative = litho::LevelSetUtils::evolve_normal_WENO_godunov(minimum, negative_speed, 1.0, 1.0);
+    const auto maximum_positive = litho::LevelSetUtils::evolve_normal_WENO_godunov(maximum, positive_speed, 1.0, 1.0);
+    const auto maximum_negative = litho::LevelSetUtils::evolve_normal_WENO_godunov(maximum, negative_speed, 1.0, 1.0);
 
-    // At a local minimum Dx-=-1 and Dx+=+1. Godunov selects neither for
-    // positive speed, but both squared contributions for negative speed.
-    require_near(expanding.delta(rows / 2, center), 0.0, 1e-12,
+    // At an extremum both one-sided candidates can be active. Exact Godunov
+    // selects their maximum magnitude rather than summing their squares.
+    require_near(minimum_positive.delta(rows / 2, center), 0.0, 1e-12,
                  "positive speed at a local minimum must use the Godunov zero state");
-    require_near(contracting.delta(rows / 2, center), -std::sqrt(2.0), 1e-6,
-                 "negative speed at a local minimum must combine both one-sided slopes");
+    require_near(minimum_negative.delta(rows / 2, center), -1.0, 1e-6,
+                 "negative speed at a local minimum must select the larger one-sided slope");
+    require_near(maximum_positive.delta(rows / 2, center), 1.0, 1e-6,
+                 "positive speed at a local maximum must select the larger one-sided slope");
+    require_near(maximum_negative.delta(rows / 2, center), 0.0, 1e-12,
+                 "negative speed at a local maximum must use the Godunov zero state");
 }
 
 void test_invalid_inputs_are_rejected() {

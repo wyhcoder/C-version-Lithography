@@ -119,7 +119,7 @@ Imaging_Result Imaging::compute(const Eigen::MatrixXd& mask,
 
     Eigen::MatrixXd aerial_image = Eigen::MatrixXd::Zero(N, N);
 
-    // 每个光学核相互独立。若已经处于 MEEF 外层并行区，则不再创建内层线程组，
+    // 每个光学核相互独立。若已经处于 MEEF/Micro 外层并行区，则不再创建内层线程组，
     // 避免“外层线程数 × 内层线程数”造成线程过度订阅。
 #ifdef _OPENMP
     const bool enable_inner_parallel = (omp_in_parallel() == 0);

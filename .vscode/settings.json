@@ -1,8 +1,9 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
     "C_Cpp.default.compileCommands": "${workspaceFolder}/build-release/compile_commands.json",
     "C_Cpp.default.compilerPath": "/usr/bin/clang++",
     "C_Cpp.default.cppStandard": "c++20",
-    "editor.fontWeight": "normal"
+    "editor.fontWeight": "normal",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

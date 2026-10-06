@@ -5,6 +5,9 @@
 #include <stdexcept>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 // OpenCV 5 moved DistanceTypes (and DIST_L2) into this header.  OpenCV 4
 // exposes it through imgproc.hpp, so only include the new header when needed.
 #if CV_VERSION_MAJOR >= 5
@@ -122,12 +125,17 @@ namespace litho {
 
         int R = M.rows(), C = M.cols();
         Eigen::MatrixXd result(R, C);
+        // 全芯片 LSM 在 Micro 之间并行时，WENO 行/列循环串行执行；单块调用仍保留内部并行。
+        bool enable_inner_parallel = true;
+#ifdef _OPENMP
+        enable_inner_parallel = (omp_in_parallel() == 0);
+#endif
         if (ax == 0) {
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for if(enable_inner_parallel) schedule(static)
             for (int j = 0; j < C; ++j)
                 result.col(j) = weno5_1d(padded.col(j), R, dx, dir);
         } else {
-            #pragma omp parallel for schedule(static)                       
+            #pragma omp parallel for if(enable_inner_parallel) schedule(static)
             for (int i = 0; i < R; ++i)
                 result.row(i) = weno5_1d(padded.row(i).transpose(), C, dx, dir);
         }
@@ -185,15 +193,15 @@ namespace litho {
                     const double dxp_neg = std::min(dx_plus, 0.0);
                     const double dym_pos = std::max(dy_minus, 0.0);
                     const double dyp_neg = std::min(dy_plus, 0.0);
-                    gx_sq = dxm_pos * dxm_pos + dxp_neg * dxp_neg;
-                    gy_sq = dym_pos * dym_pos + dyp_neg * dyp_neg;
+                    gx_sq = std::max(dxm_pos * dxm_pos, dxp_neg * dxp_neg);
+                    gy_sq = std::max(dym_pos * dym_pos, dyp_neg * dyp_neg);
                 }else if (speed < 0.0){
                     const double dxm_neg = std::min(dx_minus, 0.0);
                     const double dxp_pos = std::max(dx_plus, 0.0);
                     const double dym_neg = std::min(dy_minus, 0.0);
                     const double dyp_pos = std::max(dy_plus, 0.0);
-                    gx_sq = dxm_neg * dxm_neg + dxp_pos * dxp_pos;
-                    gy_sq = dym_neg * dym_neg + dyp_pos * dyp_pos;
+                    gx_sq = std::max(dxm_neg * dxm_neg, dxp_pos * dxp_pos);
+                    gy_sq = std::max(dym_neg * dym_neg, dyp_pos * dyp_pos);
                 }
 
                 grad_mag(i, j) = std::sqrt(gx_sq + gy_sq);

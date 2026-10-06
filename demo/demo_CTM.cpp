@@ -109,7 +109,7 @@ int main(int argc, char** argv){
     // SaveTxt::save_mat_int(binary_mask, "binary_mask.txt");
     // Eigen::MatrixXd binarry_mask_OTSU = Imbinarize::binarize_OTSU(result);
     // SaveTxt::save_mat_int(binarry_mask_OTSU, "binarry_mask_OTSU.txt");
-    BinarizeResult binary_mask = Imbinarize::binarize_advanced(result, simulator._mask.data());
+    BinarizeResult binary_mask = Imbinarize::binarize_advanced(result, simulator._mask.data(), 0.1, 0.15);
     SaveTxt::save_mat_int(binary_mask.final_mask, "CTM_result/binary_mask.txt");
     // SaveTxt::save_mat(binary_new.prob, "binary_new_probability.txt");
     Imaging_Result CTM_result = imaging.compute(binary_mask.final_mask);

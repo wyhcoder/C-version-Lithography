@@ -19,7 +19,12 @@ public:
     Eigen::MatrixXd pe_gradient(const Eigen::MatrixXd& wafer_image,
                                 const Eigen::MatrixXd& target_image,
                                 const std::vector<Eigen::MatrixXcd>& electric_field);
-    
+
+    // 加权 PE：L = Σ loss_window * (wafer_image - target_image)²，窗口尺寸与图像相同。
+    // 全芯片分块时 Core 为 1、Halo 为 0；窗口作用于反传的误差信号，返回的 mask 梯度仍覆盖完整局部区域。
+    Eigen::MatrixXd pe_gradient(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                               const std::vector<Eigen::MatrixXcd>& electric_field, const Eigen::MatrixXd& loss_window);
+
     Eigen::MatrixXd epe_gradient(const Eigen::MatrixXd& aerial_image, EpsResult eps_result, double threshold, double dx, const std::vector<Eigen::MatrixXcd>& electric_field);
     // 带非主图形区域显影惩罚的梯度
     //   penalty           : 惩罚权重 β
@@ -30,6 +35,11 @@ public:
         const std::vector<Eigen::MatrixXcd>& electric_field,
         double penalty,
         double penalty_threshold = 0.01);
+
+    // 与带惩罚 PE 使用同一公式，但在反传误差信号处乘 loss_window，限定评价区域。
+    Eigen::MatrixXd pe_gradient_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                           const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
+                                           double penalty_threshold, const Eigen::MatrixXd& loss_window);
 
     // EPE 损失对掩模的梯度
     //   aerial_image   : N×N 空间像（未经 sigmoid）

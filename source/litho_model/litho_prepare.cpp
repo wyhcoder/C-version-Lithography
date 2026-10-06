@@ -13,7 +13,7 @@
 
 namespace litho {
 
-LithoPrepare::LithoPrepare(const Grid& grid, const Pupil& pupil, const Source& source, bool use_socs) {
+LithoPrepare::LithoPrepare(const Grid& grid, const Pupil& pupil, const Source& source, bool use_socs, bool compact_socs) {
     // ── 1. 空间网格 ──────────────────────────────────────────────────────
     const auto& gc   = grid.grid_coords();
     _cache.N         = grid.size();
@@ -24,6 +24,7 @@ LithoPrepare::LithoPrepare(const Grid& grid, const Pupil& pupil, const Source& s
 
     //socs计算
     _use_socs = use_socs;
+    _compact_socs = compact_socs;
     // _num_socs = use_socs;
 
     
@@ -234,9 +235,28 @@ void LithoPrepare::_compute_socs_kernels(){
     const auto& gs = _cache.source_gs_phys;
     const auto& ws = _cache.source_ws;
 
-    const int Nr = (int)pupil_frequency.rows();
-    const int Nc = (int)pupil_frequency.cols();
+    int origin_y = 0, origin_x = 0, end_y = N, end_x = N;
+    if (_compact_socs) {
+        int pupil_y0 = N, pupil_x0 = N, pupil_y1 = 0, pupil_x1 = 0;
+        for (int y = 0; y < N; ++y) {
+            for (int x = 0; x < N; ++x) {
+                if (pupil_frequency(y, x) == std::complex<double>(0.0, 0.0)) continue;
+                pupil_y0 = std::min(pupil_y0, y);
+                pupil_x0 = std::min(pupil_x0, x);
+                pupil_y1 = std::max(pupil_y1, y);
+                pupil_x1 = std::max(pupil_x1, x);
+            }
+        }
+        // P(r+r0,c+c0) 的双线性插值还读取下一行/列，故支持下界额外扩展一个像素。
+        origin_y = std::max(0, pupil_y0 - static_cast<int>(std::floor(gs.maxCoeff() / dfy)) - 1);
+        origin_x = std::max(0, pupil_x0 - static_cast<int>(std::floor(fs.maxCoeff() / dfx)) - 1);
+        end_y = std::min(N, pupil_y1 - static_cast<int>(std::floor(gs.minCoeff() / dfy)) + 1);
+        end_x = std::min(N, pupil_x1 - static_cast<int>(std::floor(fs.minCoeff() / dfx)) + 1);
+    }
+    const int Nr = end_y - origin_y, Nc = end_x - origin_x;
+    // 所裁行在每个光源点对应的列中都为零，因此裁剪前后的 AᴴA 相同，非零奇异值及成像结果相同。
     Eigen::MatrixXcd A(Nr * Nc, Ns);
+    if (_compact_socs) std::cout << "Compact SOCS support: " << Nr << 'x' << Nc << ", optical grid=" << N << std::endl;
     // lambda函数
     auto pupil_at = [&](int r, int c) -> std::complex<double> {
         if (r < 0 || r >= N || c < 0 || c >= N) return {0.0, 0.0};
@@ -253,13 +273,13 @@ void LithoPrepare::_compute_socs_kernels(){
         double tc = dc - c0;
         double tr = dr - r0;
 
-        Eigen::MatrixXcd shifted_pupil(N, N);
+        Eigen::MatrixXcd shifted_pupil(Nr, Nc);
 
         // P(f + f_s) 双线性插值（DC 在中心）
-        for (int r = 0; r < N; ++r) {
-            for (int c = 0; c < N; ++c) {
-                int ra = r + r0, rb = r + r0 + 1;
-                int ca = c + c0, cb = c + c0 + 1;
+        for (int r = 0; r < Nr; ++r) {
+            for (int c = 0; c < Nc; ++c) {
+                int ra = origin_y + r + r0, rb = ra + 1;
+                int ca = origin_x + c + c0, cb = ca + 1;
                 shifted_pupil(r, c) =
                     (1 - tr) * (1 - tc) * pupil_at(ra, ca) +
                     (1 - tr) *      tc  * pupil_at(ra, cb) +
@@ -276,7 +296,7 @@ void LithoPrepare::_compute_socs_kernels(){
     // ── 2. Thin SVD: A = U Σ Vᴴ ─────────────────────────────────────
     // BDCSVD 比 JacobiSVD 快 10-100 倍，精度对成像足够
     Eigen::BDCSVD<Eigen::MatrixXcd,Eigen::ComputeThinU> svd(A);
-    const auto& U = svd.matrixU();          // [N² × Ns]
+    const auto& U = svd.matrixU();          // [支持区域像素数 × Ns]，默认完整网格时为 N² 行。
     const auto& S = svd.singularValues();   // [Ns]，降序
 
     // ── 3. 取前 K 个核 ──────────────────────────────────────────────
@@ -307,8 +327,8 @@ void LithoPrepare::_compute_socs_kernels(){
         for (int k = 0; k < K_use; ++k){
             _cache.socs_eigenvalues[k] = S(k) * S(k);   // λ_k = σ_k²
             top_energy += _cache.socs_eigenvalues[k];
-            Eigen::Map<const Eigen::MatrixXcd> kernel_freq(
-            U.col(k).data(), N, N);
+            Eigen::MatrixXcd kernel_freq = Eigen::MatrixXcd::Zero(N, N);
+            kernel_freq.block(origin_y, origin_x, Nr, Nc) = Eigen::Map<const Eigen::MatrixXcd>(U.col(k).data(), Nr, Nc);
             Eigen::MatrixXcd kernel = kernel_freq;
             FFT::ifftshift_inplace(kernel);
             // 不能使用共享的_fft_in/_fft_out

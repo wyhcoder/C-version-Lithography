@@ -223,15 +223,15 @@ Vn < 0：x、y全部选择plus
 当 `Vn > 0`：
 
 ```text
-Gx^2 = max(Dx-, 0)^2 + min(Dx+, 0)^2
-Gy^2 = max(Dy-, 0)^2 + min(Dy+, 0)^2
+Gx^2 = max(max(Dx-, 0)^2, min(Dx+, 0)^2)
+Gy^2 = max(max(Dy-, 0)^2, min(Dy+, 0)^2)
 ```
 
 当 `Vn < 0`：
 
 ```text
-Gx^2 = min(Dx-, 0)^2 + max(Dx+, 0)^2
-Gy^2 = min(Dy-, 0)^2 + max(Dy+, 0)^2
+Gx^2 = max(min(Dx-, 0)^2, max(Dx+, 0)^2)
+Gy^2 = max(min(Dy-, 0)^2, max(Dy+, 0)^2)
 ```
 
 然后计算：

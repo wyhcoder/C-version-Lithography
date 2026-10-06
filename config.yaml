@@ -5,7 +5,7 @@ PATTERN_NAME: &PATTERN_NAME "工字型"
 system:
   wavelength_nm: 193.0
   pixel_size_nm: 4.0
-  grid_size_pixel: 257
+  grid_size_pixel: 257       # 实际空间/FFT/mask 边长（像素）；256、257 等奇偶尺寸均自动处理
 
 mask:
   image_name: *PATTERN_NAME
@@ -117,7 +117,7 @@ sraf_optimizer:
       other_weight: 1.0
     pv_band:
       dose_margin: 0.05
-      defocus_range: 100.0
+      defocus_range: 200.0
       defocus_step: 3
       mode: "full"                  # dose_only / defocus_only / full
 

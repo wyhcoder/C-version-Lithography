@@ -124,10 +124,10 @@ static Eigen::MatrixXcd roll_cols(const Eigen::MatrixXcd& X, int shift) {
     return Y;
 }
 
-// ── fftshift：零频从角点搬到中心（np.fft.fftshift，np是用ceil向上取整）──
+// fftshift：沿每个轴向正方向移动 floor(N/2) 个位置，使角点零频落在中心索引 N/2。
 Eigen::MatrixXcd FFT::fftshift(const Eigen::MatrixXcd& X) {
-    const int r2 = static_cast<int>(X.rows() + 1) / 2;
-    const int c2 = static_cast<int>(X.cols() + 1) / 2;
+    const int r2 = static_cast<int>(X.rows()) / 2;
+    const int c2 = static_cast<int>(X.cols()) / 2;
     return roll_cols(roll_rows(X, r2), c2);
 }
 

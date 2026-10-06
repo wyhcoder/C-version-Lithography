@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Visualize target, CTM/LSM masks, and the CTM-binary wafer image.
+"""Visualize the target, CTM masks, LSM mask, and LSM wafer image.
 
 Run without arguments from the project root.  The script reads the current
-result/System_result, result/CTM_result, and result/LSM_result text matrices,
-then saves one comparison figure under result/.
+result/CTM_result and result/LSM_result text matrices, then saves one comparison
+figure under result/.  The target is loaded from result/System_result when
+available and otherwise from the current MEEF result snapshot.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ class ResultMatrices:
     ctm_gray_mask: np.ndarray
     ctm_binary_mask: np.ndarray
     lsm_mask: np.ndarray
-    ctm_binary_wafer: np.ndarray
+    lsm_wafer: np.ndarray
 
 
 def project_root() -> Path:
@@ -47,12 +48,21 @@ def load_results(result_root: Path) -> ResultMatrices:
     system_dir = result_root / "System_result"
     ctm_dir = result_root / "CTM_result"
     lsm_dir = result_root / "LSM_result"
+    target_candidates = (
+        system_dir / "target_mask.txt",
+        result_root / "MEEF_result" / "test" / "target_mask.txt",
+    )
+    target_path = next((path for path in target_candidates if path.is_file()), None)
+    if target_path is None:
+        searched = ", ".join(str(path) for path in target_candidates)
+        raise FileNotFoundError(f"target matrix not found; searched: {searched}")
+
     matrices = ResultMatrices(
-        target=load_matrix(system_dir / "target_mask.txt"),
+        target=load_matrix(target_path),
         ctm_gray_mask=load_matrix(ctm_dir / "gray_mask.txt"),
         ctm_binary_mask=load_matrix(ctm_dir / "binary_mask.txt"),
         lsm_mask=load_matrix(lsm_dir / "LSM_mask.txt"),
-        ctm_binary_wafer=load_matrix(ctm_dir / "wafer_image_B.txt"),
+        lsm_wafer=load_matrix(lsm_dir / "LSM_wafer.txt"),
     )
 
     expected_shape = matrices.target.shape
@@ -96,13 +106,13 @@ def plot_results(matrices: ResultMatrices, output_path: Path) -> None:
         figure.add_subplot(grid[1, 1:3]),
         figure.add_subplot(grid[1, 3:5]),
     )
-    figure.suptitle("CTM and LSM optimization results", fontsize=17)
+    figure.suptitle("CTM and level-set optimization results", fontsize=17)
 
     show_matrix(axes[0], matrices.target, "Target layout")
-    show_matrix(axes[1], matrices.ctm_gray_mask, "CTM optimized mask (gray)")
+    show_matrix(axes[1], matrices.ctm_gray_mask, "CTM optimized grayscale mask")
     show_matrix(axes[2], matrices.ctm_binary_mask, "CTM binarized mask")
-    show_matrix(axes[3], matrices.lsm_mask, "LSM optimized mask")
-    show_matrix(axes[4], matrices.ctm_binary_wafer, "Wafer from CTM binary mask")
+    show_matrix(axes[3], matrices.lsm_mask, "Level-set optimized mask")
+    show_matrix(axes[4], matrices.lsm_wafer, "Level-set optimized wafer")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=220, bbox_inches="tight")

@@ -81,6 +81,20 @@ cd build-release
 ./demo_CTM ../config.yaml
 ```
 
+## 全芯片 CTM → LSM
+
+全芯片 LSM 读取 `demo_full_chip_ctm` 输出的 `binary_mask.txt`，以原始 target 为目标继续优化。配置在 `config_full_chip_lsm.yaml`；各 Micro 并行成像、求梯度和更新水平集，四邻域的 CEPT 与梯度融合串行完成，最后回拼历史最佳轮的 Core。
+
+在项目根目录执行：
+
+```bash
+cmake --build build-release --target demo_full_chip_lsm --parallel 4
+OMP_NUM_THREADS=4 ./build-release/demo_full_chip_lsm config_full_chip_lsm.yaml 20
+```
+
+省略 `20` 时使用 YAML 中的更新次数。结束后自动生成原始 target 与最佳 LSM mask 的全图 AI/WI 对比 PNG。
+参数、更新公式和输出说明见 [全芯片 LSM](docs/FULL_CHIP_LSM.md)，前一阶段见 [全芯片 CTM](docs/FULL_CHIP_CTM.md)。
+
 ## 完整工作流
 
 ```text
@@ -436,16 +450,29 @@ cd build-release
 
 这些文本文件使用 `y x` 坐标。独立宽度结果中的 `component_id` 用来对应原 SRAF 连通区，`sraf_index` 是宽度向量下标。
 
-### 9. 绘制独立宽度几何图
+### 9. 绘制宽度优化几何图
 
-独立宽度优化完成后运行：
+共享宽度优化完成后运行：
 
 ```bash
 cd ..
 MPLCONFIGDIR=.cache/matplotlib ./.venv/bin/python \
     scripts/plot_sraf_width_geometry.py \
+    --width-mode shared \
     --result-dir result/SRAF_result \
     --target-mask result/MEEF_result/test/target_mask.txt
+```
+
+脚本从 `shared_width_history.csv` 中读取最低 cost 对应的最优共享半宽，并将该宽度应用到所有 SRAF，默认输出为：
+
+```text
+result/SRAF_result/optimized_shared_parametric_geometry.png
+```
+
+绘制独立宽度结果时，将参数改为：
+
+```bash
+--width-mode independent
 ```
 
 脚本读取逐边拟合结果，可以绘制分叉 SRAF；同一个 `component_id` 的所有边使用 `optimized_independent_widths.csv` 中的同一个半宽。默认输出为：

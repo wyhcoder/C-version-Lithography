@@ -4,6 +4,10 @@
 #include "level_set_utils.h"
 #include <stdexcept>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace litho {
 
 Gradient::Gradient(const ImagingCache& cache, double threshold, double alpha)
@@ -52,7 +56,11 @@ Eigen::MatrixXd Gradient::_backpropagate(
     // 并行区结束后固定按 k=0..K-1 求和，使 1 线程与多线程结果一致。
     std::vector<Eigen::MatrixXd> kernel_gradients(K);
 
-    #pragma omp parallel
+    // 外层已按 Micro/MEEF 任务并行时，单个任务内部顺序处理核，避免再创建一组工作线程。
+#ifdef _OPENMP
+    const bool enable_inner_parallel = (omp_in_parallel() == 0);
+    #pragma omp parallel if(enable_inner_parallel)
+#endif
     {
         // FFTW plan 只读共享；执行所用的输入、输出 buffer 必须每线程私有。
         fftw_complex* local_in  = fftw_alloc_complex(N * N);
@@ -123,6 +131,14 @@ Eigen::MatrixXd Gradient::pe_gradient(
     return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
 }
 
+Eigen::MatrixXd Gradient::pe_gradient(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                    const std::vector<Eigen::MatrixXcd>& electric_field, const Eigen::MatrixXd& loss_window) {
+    // 在成像误差处限定统计区域，再经过光学伴随反传；不能先算全区域梯度再裁成 Core。
+    const Eigen::MatrixXd dLdI = ((wafer_image - target_image).array() * wafer_image.array() *
+                                  (1.0 - wafer_image.array()) * loss_window.array()).matrix();
+    return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
+}
+
 Eigen::MatrixXd Gradient::epe_gradient(
     const Eigen::MatrixXd& aerial_image,
     EpsResult eps_result,
@@ -167,6 +183,17 @@ Eigen::MatrixXd Gradient::pe_gradient_with_penalty(
     dLdI_pen.array() *= (target_image.array() < 0.5).cast<double>();
 
     Eigen::MatrixXd dLdI = dLdI_main + dLdI_pen;
+    return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
+}
+
+Eigen::MatrixXd Gradient::pe_gradient_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                                const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
+                                                double penalty_threshold, const Eigen::MatrixXd& loss_window) {
+    const Eigen::ArrayXXd residual = wafer_image.array() - target_image.array();
+    const Eigen::ArrayXXd background = (target_image.array() < 0.5).cast<double>();
+    const Eigen::ArrayXXd excess = (wafer_image.array() - penalty_threshold).cwiseMax(0.0);
+    const Eigen::MatrixXd dLdI = ((residual + penalty * background * excess) * wafer_image.array() *
+                                  (1.0 - wafer_image.array()) * loss_window.array()).matrix();
     return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
 }
 

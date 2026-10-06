@@ -40,13 +40,14 @@ static std::string _mask_path(const std::string& image_name) {
 // ── 构造函数：全部走成员初始化列表 ────────────────────────────────────
 LithographySimulator::LithographySimulator(const SimulationParameters& params)
     : _params(params),
-      _grid  (params.mask.row_grid_size, params.system.pixel_size_nm,params.optics.na, params.system.wavelength_nm),
+      // 光学网格和下方 mask 使用同一个配置尺寸，避免奇偶切换后两者边长不同。
+      _grid  (params.system.grid_size_pixel, params.system.pixel_size_nm, params.optics.na, params.system.wavelength_nm),
       _pupil (_make_pupil_params(params),
               _grid.grid_coords().Fx_2d,
               _grid.grid_coords().Fy_2d),
       _source(_make_source_params(params, _grid.grid_coords().Fx_1d)),
       _mask  (_mask_path(params.mask.image_name),
-              params.system.grid_size_pixel,
+              _grid.size(),
               /*normalize=*/true),
       _ep_select(_mask.data(),4,1)
 {

@@ -39,6 +39,25 @@ struct TestDirectory {
     }
 };
 
+void check_grid_dimensions(litho::LithographySimulator& simulator, const litho::ImagingCache& cache) {
+    const int n = simulator._grid.size();
+    require(simulator._mask.data().rows() == n && simulator._mask.data().cols() == n, "mask and grid dimensions differ");
+    require(cache.N == n, "imaging cache and grid dimensions differ");
+    const auto& frequencies = simulator._grid.grid_coords().Fx_1d;
+    const double physical_step = 1.0 / (n * simulator._params.system.pixel_size_nm);
+    const double normalized_step = physical_step * simulator._params.system.wavelength_nm / simulator._params.optics.na;
+    require(frequencies(n / 2) == 0.0, "FFT frequency axis has no central zero");
+    require(std::abs(frequencies(0) + (n / 2) * normalized_step) < 1e-12, "FFT frequency axis starts at wrong bin");
+    require(std::abs(frequencies(n - 1) - (n - 1 - n / 2) * normalized_step) < 1e-12, "FFT frequency axis ends at wrong bin");
+    for (int i = 1; i < n; ++i) {
+        require(std::abs(frequencies(i) - frequencies(i - 1) - normalized_step) < 1e-12, "FFT frequency spacing is incorrect");
+    }
+    const Eigen::VectorXd physical = simulator._grid.fftF();
+    require(physical(n / 2) == 0.0, "physical frequency axis has no central zero");
+    require(physical.isApprox(frequencies * simulator._params.optics.na / simulator._params.system.wavelength_nm, 1e-12),
+            "physical and normalized frequency axes differ");
+}
+
 void check_pe_gradient(litho::LithographySimulator& simulator, litho::ImagingCache& cache, bool with_penalty) {
     const auto& target = simulator._mask.data();
     const double threshold = simulator._params.resist.threshold;
@@ -81,6 +100,9 @@ void diagnose_real_input() {
     litho::LithographySimulator simulator(params);
     litho::LithoPrepare prepare(simulator._grid, simulator._pupil, simulator._source, true);
     litho::ImagingCache cache = prepare.cache();
+    check_grid_dimensions(simulator, cache);
+    std::cout << "Real grid=" << simulator._grid.size() << " mask=" << simulator._mask.data().rows()
+              << 'x' << simulator._mask.data().cols() << " cache.N=" << cache.N << std::endl;
     litho::Imaging imaging(cache);
     litho::Gradient gradient(cache, params.resist.threshold, params.resist.alpha);
     const Eigen::MatrixXd& target = simulator._mask.data();
@@ -134,40 +156,45 @@ void diagnose_real_input() {
 
 void test_synthetic() {
     TestDirectory directory;
-    cv::Mat pattern(65, 65, CV_8UC1, cv::Scalar(0));
+    cv::Mat pattern(64, 64, CV_8UC1, cv::Scalar(0));
     pattern(cv::Rect(23, 23, 19, 19)).setTo(255);
     require(cv::imwrite("target_pattern/ctm_smoke.bmp", pattern), "failed to write synthetic mask");
 
-    litho::SimulationParameters params;
-    params.system = {193.0, 4.0, 65};
-    params.mask = {"ctm_smoke", 64};
-    params.optics.na = 1.35;
-    params.optics.refractive_index = 1.44;
-    params.source = {"annular", 0.6, 0.9};
-    params.resist = {"threshold", 0.25, 85};
+    // 原始 BMP 保持 64×64，仅改变 system.grid_size_pixel，检查奇偶光学尺寸和 mask/梯度的一致性。
+    for (int n : {64, 65}) {
+        litho::SimulationParameters params;
+        params.system = {193.0, 4.0, n};
+        params.mask = {"ctm_smoke", 64};
+        params.optics.na = 1.35;
+        params.optics.refractive_index = 1.44;
+        params.source = {"annular", 0.6, 0.9};
+        params.resist = {"threshold", 0.25, 85};
 
-    litho::LithographySimulator simulator(params);
-    litho::LithoPrepare prepare(simulator._grid, simulator._pupil, simulator._source, true);
-    litho::ImagingCache cache = prepare.cache();
-    check_pe_gradient(simulator, cache, false);
-    check_pe_gradient(simulator, cache, true);
+        litho::LithographySimulator simulator(params);
+        litho::LithoPrepare prepare(simulator._grid, simulator._pupil, simulator._source, true);
+        litho::ImagingCache cache = prepare.cache();
+        require(simulator._grid.size() == n, "system.grid_size_pixel did not control the optical dimensions");
+        check_grid_dimensions(simulator, cache);
+        check_pe_gradient(simulator, cache, false);
+        check_pe_gradient(simulator, cache, true);
 
-    litho::CTM_Optimizer gradient_descent(simulator, cache, 3, 0.9, "gradient_descent", 10, 1e100);
-    const Eigen::MatrixXd gd_mask = gradient_descent.optimize(false, false);
-    require(gradient_descent.error_history().size() == 1, "gradient descent did not stop on gradient norm");
-    require(gd_mask.allFinite(), "gradient descent returned a non-finite mask");
+        litho::CTM_Optimizer gradient_descent(simulator, cache, 3, 0.9, "gradient_descent", 10, 1e100);
+        const Eigen::MatrixXd gd_mask = gradient_descent.optimize(false, false);
+        require(gradient_descent.error_history().size() == 1, "gradient descent did not stop on gradient norm");
+        require(gd_mask.allFinite(), "gradient descent returned a non-finite mask");
 
-    litho::CTM_Optimizer lbfgs_early(simulator, cache, 3, 0.9, "lbfgs", 10, 1e100);
-    const Eigen::MatrixXd lbfgs_early_mask = lbfgs_early.optimize(false, false);
-    require(lbfgs_early.error_history().size() == 1, "L-BFGS did not stop on gradient norm");
-    require(lbfgs_early_mask.allFinite(), "L-BFGS returned a non-finite mask");
-    require(gd_mask.isApprox(lbfgs_early_mask, 1e-12), "both methods should return the same initial mask when stopped immediately");
+        litho::CTM_Optimizer lbfgs_early(simulator, cache, 3, 0.9, "lbfgs", 10, 1e100);
+        const Eigen::MatrixXd lbfgs_early_mask = lbfgs_early.optimize(false, false);
+        require(lbfgs_early.error_history().size() == 1, "L-BFGS did not stop on gradient norm");
+        require(lbfgs_early_mask.allFinite(), "L-BFGS returned a non-finite mask");
+        require(gd_mask.isApprox(lbfgs_early_mask, 1e-12), "both methods should return the same initial mask when stopped immediately");
 
-    litho::CTM_Optimizer lbfgs_step(simulator, cache, 1, 0.9, "lbfgs", 10, 0.0);
-    const Eigen::MatrixXd lbfgs_step_mask = lbfgs_step.optimize(false, false);
-    require(lbfgs_step.error_history().size() >= 2, "L-BFGS did not evaluate a line-search step");
-    require(lbfgs_step.error_history().back() <= lbfgs_step.error_history().front(), "L-BFGS line search did not reduce PE");
-    require(lbfgs_step_mask.allFinite(), "L-BFGS step returned a non-finite mask");
+        litho::CTM_Optimizer lbfgs_step(simulator, cache, 1, 0.9, "lbfgs", 10, 0.0);
+        const Eigen::MatrixXd lbfgs_step_mask = lbfgs_step.optimize(false, false);
+        require(lbfgs_step.error_history().size() >= 2, "L-BFGS did not evaluate a line-search step");
+        require(lbfgs_step.error_history().back() <= lbfgs_step.error_history().front(), "L-BFGS line search did not reduce PE");
+        require(lbfgs_step_mask.allFinite(), "L-BFGS step returned a non-finite mask");
+    }
 }
 
 }  // namespace

@@ -49,7 +49,9 @@ struct ImagingCache {
 class LithoPrepare {
 public:
     // grid / pupil / source 必须已经完成构造（即 compute 已调用）
-    LithoPrepare(const Grid& grid, const Pupil& pupil, const Source& source, bool use_socs);
+    // compact_socs=true 时仅在所有频移光瞳的非零支持矩形上做 SVD，再补零还原完整 N×N 核。
+    // 只去除恒为零的频域行，不改变 SOCS 分解；适用于 1024 等大网格的成像评价。
+    LithoPrepare(const Grid& grid, const Pupil& pupil, const Source& source, bool use_socs, bool compact_socs = false);
     ~LithoPrepare();
     const ImagingCache& cache() const { return _cache; }
 
@@ -74,6 +76,7 @@ private:
 
     //socs计算中间量   
     bool _use_socs = false;
+    bool _compact_socs = false; // 仅影响 SVD 中间矩阵的存储区域，输出核尺寸仍为 cache.N × cache.N。
     
     int  _num_socs = 36;     // 0 = 用全部光源点；>0 = top-K 个相干核
     

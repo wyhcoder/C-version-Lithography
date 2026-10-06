@@ -13,6 +13,12 @@
 
 namespace litho {
 
+struct Result_evaluate_theta {
+    double loss;
+    Eigen::MatrixXd mask;
+    Eigen::MatrixXd mask_gradient;
+};
+
 class CTM_Optimizer {
 public:
     CTM_Optimizer(LithographySimulator& simulator,
@@ -28,6 +34,12 @@ public:
     Eigen::MatrixXd optimize(bool verbose = true, bool save_intermediate = true);
     Eigen::MatrixXd optimize_lbfgs(bool verbose = true);
     const std::vector<double>& error_history() const { return _error_history; }
+
+    // 按输入图形初始化 theta：非零像素为 0.3π，其余为 0.7π；不依赖单块优化器状态，供全芯片流程复用。
+    static Eigen::MatrixXd initialize_theta(const Eigen::MatrixXd& initial_mask);
+
+    Result_evaluate_theta evaluate(const Eigen::MatrixXd& theta);
+    
 
 private:
     double _evaluate_theta_objective(const Eigen::VectorXd& x, Eigen::VectorXd& gradient);

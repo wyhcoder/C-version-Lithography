@@ -8,12 +8,12 @@ namespace litho {
 struct SystemParams {
     double wavelength_nm;
     double pixel_size_nm;
-    int grid_size_pixel;
+    int grid_size_pixel; // 光学网格及补齐后 mask 的边长（像素）；直接采用此值，奇偶尺寸自动处理。
 };
 
 struct MaskParams {
     std::string image_name;
-    int         row_grid_size;
+    int         row_grid_size; // 原始图案的边长说明（像素）；实际成像尺寸由 system.grid_size_pixel 决定。
 };
 
 struct OpticsParams {

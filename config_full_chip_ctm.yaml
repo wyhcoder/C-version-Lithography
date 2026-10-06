@@ -1,0 +1,45 @@
+# 所有路径相对于本 YAML 所在目录；本配置独立于单块 CTM/LSM 的 config.yaml。
+system:
+  wavelength_nm: 193.0
+  pixel_size_nm: 8.0
+  grid_size_pixel: 1024
+mask:
+  image_name: contact_1_0_only_1024
+  row_grid_size: 1024
+optics:
+  na: 1.35
+  refractive_index: 1.44
+  aberrations: {4: 0.0}
+source:
+  type: annular
+  sigma_in: 0.6
+  sigma_out: 0.9
+resist:
+  model: threshold
+  threshold: 0.25
+  alpha: 85
+
+full_chip_ctm:
+  target_path: assets/target_pattern/contact_1_0_only_1024.bmp
+  output_dir: result/full_chip_ctm/contact_1_0_only_1024
+  grid_rows: 8                # Micro 行数；共 8×8=64 个 Micro。
+  grid_cols: 8
+  halo: 64                   # 每侧 Halo 宽度，单位：像素；Core 128 + 两侧 Halo = 局部 256。
+  guard: 30                  # 每侧独立更新的 Guard 宽度，单位：像素，位于 Halo 内。
+  imaging_source_grid_size: 256 # 最终全图成像模型的照明积分采样；target/优化灰度共享，FFT 网格为 1024。
+  iterations: 50             # 固定更新次数；命令行第二个参数可覆盖。
+  learning_rate: 0.9        # theta 域固定步长；命令行第三个参数可覆盖。
+  parallel_micro: true
+  loss_type: PE              # PE / PEPenalty / EPE / PE_EPE，EPE 沿用现有 C++ 实现。
+  pe_weight: 0.8             # 仅 PE_EPE 使用。
+  epe_weight: 0.2
+  penalty_weight: 2.0
+  penalty_threshold: 0.01
+  epe_interval_line: 6
+  epe_interval_corner: 2
+  enable_cept: true
+  cept_weight: 1.1
+  enable_grad_fusion: true  # 可独立开启 Guard 梯度融合。
+  fusion_mode: Average       # Average / Linear。
+  fusion_weight_owner: 0.5
+  fusion_weight_neighbor: 0.5

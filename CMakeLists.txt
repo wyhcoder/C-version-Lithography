@@ -154,13 +154,17 @@ add_library(litho_core STATIC
     source/litho_model/fft.cpp
     source/litho_model/litho_prepare.cpp
     source/litho_model/imaging.cpp
+    source/litho_model/mirco_imaging.cpp
 
     # 通用算法与数据处理工具
     source/utils/ep_select.cpp
     source/utils/msaa.cpp
     source/utils/parametric.cpp
     source/utils/meef_pipeline.cpp
+    source/utils/partition.cpp
     source/utils/gradient.cpp
+    source/utils/micro_gradient_exchange.cpp
+    source/utils/full_chip_imaging_compare.cpp
     source/utils/simulation_parameters.cpp
     source/utils/sraf_geometry.cpp
     source/utils/sraf_curve.cpp
@@ -168,6 +172,8 @@ add_library(litho_core STATIC
     # 仿真器及优化算法
     source/litho_model/lithography_simulator.cpp
     source/optimizer/CTM_Optimizer.cpp
+    source/optimizer/full_chip_ctm.cpp
+    source/optimizer/full_chip_lsm.cpp
     source/utils/loss.cpp
     source/utils/save_txt.cpp
     source/utils/imbinarize.cpp
@@ -247,9 +253,21 @@ target_link_libraries(demo_CTM litho_core)
 add_executable(demo_CTM_parallel_benchmark demo/demo_CTM_parallel_benchmark.cpp)
 target_link_libraries(demo_CTM_parallel_benchmark litho_core)
 
+# 全芯片 CTM：Micro 并行成像/反传和固定步长更新，串行交换、CEPT、融合及 Halo 刷新。
+add_executable(demo_full_chip_ctm demo/demo_full_chip_ctm.cpp)
+target_link_libraries(demo_full_chip_ctm litho_core)
+add_executable(demo_full_chip_imaging_compare demo/demo_full_chip_imaging_compare.cpp)
+target_link_libraries(demo_full_chip_imaging_compare litho_core)
+add_executable(demo_full_chip_lsm demo/demo_full_chip_lsm.cpp)
+target_link_libraries(demo_full_chip_lsm litho_core)
+
 # Level Set Method 优化示例。
 add_executable(demo_LSM demo/demo_LSM.cpp)
 target_link_libraries(demo_LSM litho_core)
+
+# 完整优化流程：CTM -> LSM -> MEEF 主图形控制点 -> SRAF 宽度。
+add_executable(demo_full_pipeline demo/demo_full_pipeline.cpp)
+target_link_libraries(demo_full_pipeline litho_core)
 
 # SRAF 几何前处理诊断：真实 LSM mask -> SRAF 骨架/路径/控制点统计。
 add_executable(demo_sraf_geometry demo/demo_sraf_geometry.cpp)
@@ -299,6 +317,22 @@ if(BUILD_TESTING)
     add_executable(test_level_set_godunov tests/test_level_set_godunov.cpp)
     target_link_libraries(test_level_set_godunov litho_core)
     add_test(NAME level_set_godunov COMMAND test_level_set_godunov)
+
+    add_executable(test_micro_gradient_exchange tests/test_micro_gradient_exchange.cpp)
+    target_link_libraries(test_micro_gradient_exchange litho_core)
+    add_test(NAME micro_gradient_exchange COMMAND test_micro_gradient_exchange)
+
+    add_executable(test_full_chip_ctm tests/test_full_chip_ctm.cpp)
+    target_link_libraries(test_full_chip_ctm litho_core)
+    add_test(NAME full_chip_ctm COMMAND test_full_chip_ctm)
+
+    add_executable(test_full_chip_imaging_compare tests/test_full_chip_imaging_compare.cpp)
+    target_link_libraries(test_full_chip_imaging_compare litho_core)
+    add_test(NAME full_chip_imaging_compare COMMAND test_full_chip_imaging_compare)
+
+    add_executable(test_full_chip_lsm tests/test_full_chip_lsm.cpp)
+    target_link_libraries(test_full_chip_lsm litho_core)
+    add_test(NAME full_chip_lsm COMMAND test_full_chip_lsm)
 endif()
 
 # ============================================================================

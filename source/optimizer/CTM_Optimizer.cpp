@@ -63,6 +63,44 @@ Eigen::MatrixXd CTM_Optimizer::_initialize_theta() {
                                        (1.0 - tbias) * PI));
 }
 
+Eigen::MatrixXd CTM_Optimizer::initialize_theta(const Eigen::MatrixXd& initial_mask){
+    constexpr double PI    = 3.14159265358979323846;
+    constexpr double tbias = 0.3;
+    return (initial_mask.array() > 0.0).select(
+        Eigen::MatrixXd::Constant(initial_mask.rows(), initial_mask.cols(), tbias * PI),
+        Eigen::MatrixXd::Constant(initial_mask.rows(), initial_mask.cols(), (1.0 - tbias) * PI)
+    );
+}
+
+Result_evaluate_theta CTM_Optimizer::evaluate(const Eigen::MatrixXd& theta) {
+    Result_evaluate_theta result;
+    const int rows = _target_image.rows();
+    const int cols = _target_image.cols();
+    const double threshold = _litho_simulator._params.resist.threshold;
+    const double alpha = _litho_simulator._params.resist.alpha;
+
+    _optimizing_mask = 0.5 * (1.0 + theta.array().cos()).matrix();
+    _imaging_result = _imaging.compute(_optimizing_mask, threshold, alpha);
+    _Gm = _gradient.pe_gradient(_imaging_result.wafer_image, _target_image, _imaging.get_electric_field());
+    // _Gt = (-0.5 * _Gm.array() * theta.array().sin()).matrix();
+
+    result.loss = Loss::pe_loss(_imaging_result.wafer_image, _target_image);
+    result.mask = _optimizing_mask;
+    result.mask_gradient = _Gm;
+
+    return result;
+}
+
+
+
+
+
+
+
+
+
+
+
 Eigen::MatrixXd CTM_Optimizer::optimize(bool verbose, bool save_intermediate) {
     if (_optimizer_method == "lbfgs") return optimize_lbfgs(verbose);
     return _optimize_gradient_descent(verbose, save_intermediate);

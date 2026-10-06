@@ -1,0 +1,135 @@
+{"kind":"deck","id":"pr/uodcr9","name":"Deck"}
+{"kind":"layout","layoutId":"/ppt/slideMasters/slideMaster1.xml","name":"","type":"master","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout1.xml","name":"Title Slide","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"subtitle","type":"subtitle","textPreview":"Click to edit Master subtitle style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout2.xml","name":"Title and Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout3.xml","name":"Two Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout4.xml","name":"Three Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout5.xml","name":"Four Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master"},{"name":"text placeholder 2","textPreview":"Click to edit Master"},{"name":"body","type":"body","textPreview":"Click to edit Master"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout6.xml","name":"Title Only","placeholders":[{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout7.xml","name":"Footer Only","placeholders":[{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout8.xml","name":"Blank"}
+{"kind":"slide","id":"sl/y90nupkv","slide":1,"title":"技术面试汇报","textShapes":3}
+{"kind":"shape","id":"sh/utg3698n","slide":1,"name":"矩形 8","bbox":[0,0,18,720]}
+{"kind":"shape","id":"sh/547294r6","slide":1,"name":"圆角矩形 1","bbox":[760,102,424,470]}
+{"kind":"textbox","id":"sh/7qp4be9c","slide":1,"name":"矩形 3","text":"技术面试汇报","textPreview":"技术面试汇报","textChars":6,"textLines":1,"bbox":[72,64,320,36]}
+{"kind":"textbox","id":"sh/65g3298r","slide":1,"name":"矩形 4","text":"个人介绍与项目汇报","textPreview":"个人介绍与项目汇报","textChars":9,"textLines":1,"bbox":[72,190,600,178]}
+{"kind":"shape","id":"sh/ts7md4r2","slide":1,"name":"矩形 5","bbox":[74,390,600,38]}
+{"kind":"textbox","id":"sh/sryl4zqx","slide":1,"name":"矩形 6","text":"王宇航\n广东工业大学｜控制工程","textPreview":"王宇航 | 广东工业大学｜控制工程","textChars":15,"textLines":2,"bbox":[74,505,610,122]}
+{"kind":"image","id":"im/jqxw72dk","slide":1,"name":"图片 9","bbox":[782.79,148,378.42,378.42]}
+{"kind":"slide","id":"sl/hwbqtkby","slide":2,"title":"个人基本情况","textShapes":22}
+{"kind":"textbox","id":"sh/gbmxszmt","slide":2,"name":"slide-title","text":"个人基本情况","textPreview":"个人基本情况","textChars":6,"textLines":1,"bbox":[54,42,1110,58]}
+{"kind":"shape","id":"sh/9072xkry","slide":2,"name":"矩形 1","bbox":[54,112,58,5]}
+{"kind":"textbox","id":"sh/ozy1ofad","slide":2,"name":"page-number","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1170,650,54,24]}
+{"kind":"textbox","id":"sh/b29kza94","slide":2,"name":"footer","text":"王宇航｜技术面试汇报","textPreview":"王宇航｜技术面试汇报","textChars":10,"textLines":1,"bbox":[54,650,500,24]}
+{"kind":"textbox","id":"sh/a10jqpsj","slide":2,"name":"矩形 4","text":"教育背景","textPreview":"教育背景","textChars":4,"textLines":1,"bbox":[62,227.58,430,36]}
+{"kind":"textbox","id":"sh/x4r21kru","slide":2,"name":"矩形 5","text":"广东工业大学","textPreview":"广东工业大学","textChars":6,"textLines":1,"bbox":[59.56,365.12,470,42]}
+{"kind":"textbox","id":"sh/w3i1sfa9","slide":2,"name":"矩形 6","text":"2024.09 - 至今｜控制工程 硕士","textPreview":"2024.09 - 至今｜控制工程 硕士","textChars":20,"textLines":1,"bbox":[62,418.7,490,32]}
+{"kind":"textbox","id":"sh/r65knqtk","slide":2,"name":"矩形 7","text":"研究方向","textPreview":"研究方向","textChars":4,"textLines":1,"bbox":[62,462.28,430,34]}
+{"kind":"textbox","id":"sh/q5wjelsz","slide":2,"name":"矩形 8","text":"曲线 OPC、SRAF 放置","textPreview":"曲线 OPC、SRAF 放置","textChars":14,"textLines":1,"bbox":[62,507.44,500,62]}
+{"kind":"shape","id":"sh/ove9o7yd","slide":2,"name":"圆角矩形 9","bbox":[60,551,504,92]}
+{"kind":"textbox","id":"sh/9wnqhczy","slide":2,"name":"矩形 10","text":"专业成绩 3.93 / 5\n2025学年研究生一等奖学金 2026学年研究生一等奖学金","textPreview":"专业成绩 3.93 / 5 | 2025学年研究生一等奖学金 2026学年研究生一等奖学金","textChars":43,"textLines":2,"bbox":[59.56,564.42,488.88,58]}
+{"kind":"shape","id":"sh/mtwrmxg7","slide":2,"name":"直线连接符 11","bbox":[624,170,0,420]}
+{"kind":"textbox","id":"sh/nu58f2hs","slide":2,"name":"矩形 12","text":"能力结构","textPreview":"能力结构","textChars":4,"textLines":1,"bbox":[682,162,470,36]}
+{"kind":"textbox","id":"sh/bip8jmho","slide":2,"name":"矩形 16","text":"数值优化","textPreview":"数值优化","textChars":4,"textLines":1,"bbox":[680.44,248.97,156,34]}
+{"kind":"textbox","id":"sh/cnupgny5","slide":2,"name":"矩形 17","text":"Level-set、WENO、MEEF","textPreview":"Level-set、WENO、MEEF","textChars":19,"textLines":1,"bbox":[848.44,249.97,350,58]}
+{"kind":"shape","id":"sh/do3q9szq","slide":2,"name":"直线连接符 18","bbox":[680.44,315.97,506,0]}
+{"kind":"textbox","id":"sh/t8byxkn2","slide":2,"name":"矩形 19","text":"工程实现","textPreview":"工程实现","textChars":4,"textLines":1,"bbox":[680.44,342.97,156,34]}
+{"kind":"textbox","id":"sh/s72xofmh","slide":2,"name":"矩形 20","text":"Python算法验证、C++面向对象实现","textPreview":"Python算法验证、C++面向对象实现","textChars":20,"textLines":1,"bbox":[848.44,343.97,350,58]}
+{"kind":"shape","id":"sh/76twva5c","slide":2,"name":"直线连接符 21","bbox":[680.44,409.97,506,0]}
+{"kind":"textbox","id":"sh/65kfmpor","slide":2,"name":"矩形 22","text":"数据建模","textPreview":"数据建模","textChars":4,"textLines":1,"bbox":[680.44,436.97,156,34]}
+{"kind":"textbox","id":"sh/hcvy14ne","slide":2,"name":"矩形 23","text":"批量仿真、数据集建设、正向与逆向预测","textPreview":"批量仿真、数据集建设、正向与逆向预测","textChars":18,"textLines":1,"bbox":[848.44,437.97,350,58]}
+{"kind":"textbox","id":"sh/fadgzu58","slide":2,"name":"矩形 25","text":"籍贯","textPreview":"籍贯","textChars":2,"textLines":1,"bbox":[62,135,430,36]}
+{"kind":"textbox","id":"sh/u94fqp4n","slide":2,"name":"矩形 26","text":"河南洛阳","textPreview":"河南洛阳","textChars":4,"textLines":1,"bbox":[62,174,470,42]}
+{"kind":"textbox","id":"sh/4zmxwzmp","slide":2,"name":"矩形 28","text":"长沙理工大学","textPreview":"长沙理工大学","textChars":6,"textLines":1,"bbox":[62,281.41,470,42]}
+{"kind":"textbox","id":"sh/mlgvq147","slide":2,"name":"矩形 29","text":"2020.09 – 2024.06｜测控技术与仪器 学士","textPreview":"2020.09 – 2024.06｜测控技术与仪器 学士","textChars":28,"textLines":1,"bbox":[58.44,326.41,490,32]}
+{"kind":"textbox","id":"sh/onydsbmd","slide":2,"name":"文本框 31","text":"语言水平 ","textPreview":"语言水平","textChars":5,"textLines":1,"bbox":[677.12,516.94,640.31,37.02]}
+{"kind":"textbox","id":"sh/9o7ulg3y","slide":2,"name":"矩形 32","text":"CET-4  CET-6","textPreview":"CET-4  CET-6","textChars":12,"textLines":1,"bbox":[848.44,522,350,58]}
+{"kind":"shape","id":"sh/a9gvulkj","slide":2,"name":"直线连接符 33","bbox":[680.44,495.97,506,0]}
+{"kind":"slide","id":"sl/ofy9wn61","slide":3,"title":"项目经历与实习经历","textShapes":9}
+{"kind":"textbox","id":"sh/i9w3u58v","slide":3,"name":"slide-title","text":"项目经历与实习经历","textPreview":"项目经历与实习经历","textChars":9,"textLines":1,"bbox":[54,42,1110,58]}
+{"kind":"shape","id":"sh/cza94vmx","slide":3,"name":"矩形 1","bbox":[54,112,58,5]}
+{"kind":"textbox","id":"sh/d0jax03i","slide":3,"name":"page-number","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1170,650,54,24]}
+{"kind":"textbox","id":"sh/298ryl4v","slide":3,"name":"footer","text":"王宇航｜技术面试汇报","textPreview":"王宇航｜技术面试汇报","textChars":10,"textLines":1,"bbox":[54,650,500,24]}
+{"kind":"shape","id":"sh/obq90bml","slide":3,"name":"直线连接符 5","bbox":[121.4,258,1000,0]}
+{"kind":"shape","id":"sh/pcjqtg36","slide":3,"name":"椭圆 6","bbox":[121.4,247,22,22]}
+{"kind":"textbox","id":"sh/n6ls3alk","slide":3,"name":"矩形 8","text":"Level-set 反演光刻","textPreview":"Level-set 反演光刻","textChars":14,"textLines":1,"bbox":[121.4,302,300,42]}
+{"kind":"textbox","id":"sh/n2l4fq98","slide":3,"name":"矩形 9","text":"光刻成像模型\nWENO重构空间导数\nPE驱动轮廓演化","textPreview":"光刻成像模型 | WENO重构空间导数 | PE驱动轮廓演化","textChars":26,"textLines":3,"bbox":[121.4,358,306,118]}
+{"kind":"shape","id":"sh/m1c3mlsn","slide":3,"name":"椭圆 10","bbox":[473.4,247,22,22]}
+{"kind":"textbox","id":"sh/83ulovat","slide":3,"name":"矩形 12","text":"参数化曲线 OPC","textPreview":"参数化曲线 OPC","textChars":9,"textLines":1,"bbox":[473.4,302,300,42]}
+{"kind":"textbox","id":"sh/v6l4jq94","slide":3,"name":"矩形 13","text":"轮廓抽稀与曲线拟合\nMEEF控制点优化\nSRAF骨架线与宽度表达","textPreview":"轮廓抽稀与曲线拟合 | MEEF控制点优化 | SRAF骨架线与宽度表达","textChars":32,"textLines":3,"bbox":[473.4,358,306,118]}
+{"kind":"shape","id":"sh/a5c3ql8z","slide":3,"name":"椭圆 14","bbox":[825.4,247,22,22]}
+{"kind":"textbox","id":"sh/w7ulsvqp","slide":3,"name":"矩形 16","text":"腾讯量子实验室","textPreview":"腾讯量子实验室","textChars":7,"textLines":1,"bbox":[825.4,302,300,42]}
+{"kind":"textbox","id":"sh/ja54na9g","slide":3,"name":"矩形 17","text":"参数化批量仿真\n正向与逆向预测\n设计流程自动化","textPreview":"参数化批量仿真 | 正向与逆向预测 | 设计流程自动化","textChars":23,"textLines":3,"bbox":[825.4,358,306,118]}
+{"kind":"slide","id":"sl/jyx0ra1s","slide":4,"title":"基于水平集的反演光刻","textShapes":6}
+{"kind":"textbox","id":"sh/e9gv6tc7","slide":4,"name":"slide-title","text":"基于水平集的反演光刻","textPreview":"基于水平集的反演光刻","textChars":10,"textLines":1,"bbox":[54,42,1110,58]}
+{"kind":"shape","id":"sh/1c7eh8vi","slide":4,"name":"矩形 535","bbox":[54,112,58,5]}
+{"kind":"textbox","id":"sh/gbyd83ud","slide":4,"name":"page-number","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1170,650,54,24]}
+{"kind":"textbox","id":"sh/r65wbedg","slide":4,"name":"footer","text":"王宇航｜技术面试汇报","textPreview":"王宇航｜技术面试汇报","textChars":10,"textLines":1,"bbox":[54,650,500,24]}
+{"kind":"textbox","id":"sh/65wv2tcv","slide":4,"name":"矩形 538","text":"项目目标","textPreview":"项目目标","textChars":4,"textLines":1,"bbox":[58,160,250,34]}
+{"kind":"textbox","id":"sh/mdgz6h8v","slide":4,"name":"矩形 539","text":"通过 ILT 提高复杂版图的成像质量，并生成曲线掩模与 SRAF。","textPreview":"通过 ILT 提高复杂版图的成像质量，并生成曲线掩模与 SRAF。","textChars":33,"textLines":1,"bbox":[58,205,512,78]}
+{"kind":"textbox","id":"sh/8fih8rql","slide":4,"name":"矩形 541","text":"基于傅里叶光学构建光刻成像模型\n以PE作为速度场驱动轮廓演化\n采用WENO格式完成空间导数重构\n完成Python与C++双平台实现","textPreview":"基于傅里叶光学构建光刻成像模型 | 以PE作为速度场驱动轮廓演化 | 采用WENO格式完成空间导数重构 | 完成Python与C++双平台实现","textChars":65,"textLines":4,"bbox":[45,288.17,518,210]}
+{"kind":"image","id":"im/wjadg3md","slide":4,"name":"图片 2","bbox":[570,117,658.67,441.04]}
+{"kind":"slide","id":"sl/i107q5of","slide":5,"title":"参数化曲线 OPC","textShapes":12}
+{"kind":"textbox","id":"sh/sb6xsvu9","slide":5,"name":"slide-title","text":"参数化曲线 OPC ","textPreview":"参数化曲线 OPC","textChars":10,"textLines":1,"bbox":[54,42,1110,58]}
+{"kind":"shape","id":"sh/dgbulwnm","slide":5,"name":"矩形 1","bbox":[54,112,58,5]}
+{"kind":"textbox","id":"sh/cf2tcr61","slide":5,"name":"page-number","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1170,650,54,24]}
+{"kind":"textbox","id":"sh/z2tcnm5s","slide":5,"name":"footer","text":"王宇航｜技术面试汇报","textPreview":"王宇航｜技术面试汇报","textChars":10,"textLines":1,"bbox":[54,650,500,24]}
+{"kind":"textbox","id":"sh/yhkbe1o7","slide":5,"name":"矩形 4","text":"将高冗余的像素版图转化为“主图形控制点 + SRAF骨架线控制点 + 宽度”的轻量化表达。","textPreview":"将高冗余的像素版图转化为“主图形控制点 + SRAF骨架线控制点 + 宽度”的轻量化表达。","textChars":45,"textLines":1,"bbox":[56,136,1166,56]}
+{"kind":"shape","id":"sh/n6dcr65o","slide":5,"name":"圆角矩形 7","bbox":[490,214,732,286]}
+{"kind":"textbox","id":"sh/w32dkbuh","slide":5,"name":"矩形 9","text":"主图形控制点优化与SRAF抽稀","textPreview":"主图形控制点优化与SRAF抽稀","textChars":15,"textLines":1,"bbox":[56,510,405,30]}
+{"kind":"textbox","id":"sh/x4vedgvm","slide":5,"name":"矩形 10","text":"SRAF宽度优化与PVBand对比","textPreview":"SRAF宽度优化与PVBand对比","textChars":17,"textLines":1,"bbox":[490,510,732,30]}
+{"kind":"textbox","id":"sh/ahkvi1cb","slide":5,"name":"矩形 11","text":"轮廓抽稀","textPreview":"轮廓抽稀","textChars":4,"textLines":1,"bbox":[56,558,150,30]}
+{"kind":"textbox","id":"sh/v2twb6dw","slide":5,"name":"矩形 12","text":"等距采样、DP简化、曲率采样","textPreview":"等距采样、DP简化、曲率采样","textChars":14,"textLines":1,"bbox":[56,591,350,46]}
+{"kind":"textbox","id":"sh/k7mxovud","slide":5,"name":"矩形 13","text":"控制点优化","textPreview":"控制点优化","textChars":5,"textLines":1,"bbox":[445,558,150,30]}
+{"kind":"textbox","id":"sh/58vehgvy","slide":5,"name":"矩形 14","text":"EPE与控制点位移构建MEEF矩阵","textPreview":"EPE与控制点位移构建MEEF矩阵","textChars":17,"textLines":1,"bbox":[445,591,350,46]}
+{"kind":"textbox","id":"sh/i54fmlc7","slide":5,"name":"矩形 15","text":"SRAF表达","textPreview":"SRAF表达","textChars":6,"textLines":1,"bbox":[834,558,150,30]}
+{"kind":"textbox","id":"sh/j6dwfqds","slide":5,"name":"矩形 16","text":"骨架线控制点与宽度分阶段优化","textPreview":"骨架线控制点与宽度分阶段优化","textChars":14,"textLines":1,"bbox":[834,591,350,46]}
+{"kind":"shape","id":"sh/032tgr6d","slide":5,"name":"圆角矩形 6","bbox":[92.3,214,368.7,278]}
+{"kind":"image","id":"im/uhkvq14z","slide":5,"name":"图片 18","bbox":[134.13,210,285.05,287.45]}
+{"kind":"image","id":"im/yt0f21or","slide":5,"name":"图片 20","bbox":[479,219.35,430,280.65]}
+{"kind":"image","id":"im/zu9wb6pc","slide":5,"name":"图片 22","bbox":[856,289.83,342.67,194.67]}
+{"kind":"slide","id":"sl/x8f69ofe","slide":6,"title":"腾讯量子实验室：超导量子器件数据仿真与模型训练","textShapes":15}
+{"kind":"textbox","id":"sh/1k3mhozu","slide":6,"name":"slide-title","text":"腾讯量子实验室：超导量子器件数据仿真与模型训练","textPreview":"腾讯量子实验室：超导量子器件数据仿真与模型训练","textChars":23,"textLines":1,"bbox":[54,42,1110,58]}
+{"kind":"shape","id":"sh/yhg7epsj","slide":6,"name":"矩形 1","bbox":[54,112,58,5]}
+{"kind":"textbox","id":"sh/zi98nu94","slide":6,"name":"page-number","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1170,650,54,24]}
+{"kind":"textbox","id":"sh/87ipkzal","slide":6,"name":"footer","text":"王宇航｜技术面试汇报","textPreview":"王宇航｜技术面试汇报","textChars":10,"textLines":1,"bbox":[54,650,500,24]}
+{"kind":"textbox","id":"sh/98rqt4r6","slide":6,"name":"矩形 4","text":"搭建几何参数生成、批量仿真、数据收集和模型训练的自动化流程。","textPreview":"搭建几何参数生成、批量仿真、数据收集和模型训练的自动化流程。","textChars":30,"textLines":1,"bbox":[56,135,1120,42]}
+{"kind":"shape","id":"sh/ml07i9sv","slide":6,"name":"圆角矩形 5","bbox":[59,261.5,178,92]}
+{"kind":"textbox","id":"sh/7m98ru9g","slide":6,"name":"矩形 6","text":"几何参数生成","textPreview":"几何参数生成","textChars":6,"textLines":1,"bbox":[66,285.5,154,44]}
+{"kind":"shape","id":"sh/oryp8fah","slide":6,"name":"右箭头 7","bbox":[242,292.5,34,28]}
+{"kind":"shape","id":"sh/pc76hkr2","slide":6,"name":"圆角矩形 8","bbox":[290,261.5,178,92]}
+{"kind":"textbox","id":"sh/h4bupgn6","slide":6,"name":"矩形 9","text":"批量仿真","textPreview":"批量仿真","textChars":4,"textLines":1,"bbox":[302,285.5,154,44]}
+{"kind":"shape","id":"sh/w32twb6l","slide":6,"name":"右箭头 10","bbox":[478,292.5,34,28]}
+{"kind":"shape","id":"sh/v2tcn650","slide":6,"name":"圆角矩形 11","bbox":[526,261.5,178,92]}
+{"kind":"textbox","id":"sh/u1kbu1ov","slide":6,"name":"矩形 12","text":"数据集建设","textPreview":"数据集建设","textChars":5,"textLines":1,"bbox":[538,285.5,154,44]}
+{"kind":"shape","id":"sh/5svutgni","slide":6,"name":"右箭头 13","bbox":[714,292.5,34,28]}
+{"kind":"shape","id":"sh/47mt0b6x","slide":6,"name":"圆角矩形 14","bbox":[762,261.5,178,92]}
+{"kind":"textbox","id":"sh/j6dcr65c","slide":6,"name":"矩形 15","text":"模型训练","textPreview":"模型训练","textChars":4,"textLines":1,"bbox":[774,285.5,154,44]}
+{"kind":"shape","id":"sh/i54bylor","slide":6,"name":"右箭头 16","bbox":[950,292.5,34,28]}
+{"kind":"shape","id":"sh/twfux0ne","slide":6,"name":"圆角矩形 17","bbox":[998,261.5,178,92]}
+{"kind":"textbox","id":"sh/svmt4v6t","slide":6,"name":"矩形 18","text":"正向 / 逆向预测","textPreview":"正向 / 逆向预测","textChars":9,"textLines":1,"bbox":[1010,285.5,154,44]}
+{"kind":"shape","id":"sh/cbe5g3ih","slide":6,"name":"圆角矩形 19","bbox":[56,452,346,165]}
+{"kind":"textbox","id":"sh/dcnm98zm","slide":6,"name":"矩形 20","text":"6类","textPreview":"6类","textChars":2,"textLines":1,"bbox":[78,472,302,54]}
+{"kind":"textbox","id":"sh/qpwnet0b","slide":6,"name":"矩形 21","text":"超导量子器件数据集，低通/高通叉指电容、低通/高通螺旋电感、比特\nZ 线和耦合器 Z 线器件\n","textPreview":"超导量子器件数据集，低通/高通叉指电容、低通/高通螺旋电感、比特 | Z 线和耦合器 Z 线器件 |","textChars":47,"textLines":3,"bbox":[78,536,302,46]}
+{"kind":"shape","id":"sh/bq547yhw","slide":6,"name":"圆角矩形 22","bbox":[467,452,346,150]}
+{"kind":"textbox","id":"sh/0fy5k3id","slide":6,"name":"矩形 23","text":"≤ 5%","textPreview":"≤ 5%","textChars":4,"textLines":1,"bbox":[489,472,302,54]}
+{"kind":"textbox","id":"sh/lg76d8zy","slide":6,"name":"矩形 24","text":"正向与逆向预测误差","textPreview":"正向与逆向预测误差","textChars":9,"textLines":1,"bbox":[489,536,302,46]}
+{"kind":"shape","id":"sh/ydgnit07","slide":6,"name":"圆角矩形 25","bbox":[878,452,346,150]}
+{"kind":"textbox","id":"sh/zep4byhs","slide":6,"name":"矩形 26","text":"> 90%","textPreview":"> 90%","textChars":5,"textLines":1,"bbox":[900,472,302,54]}
+{"kind":"textbox","id":"sh/gju58ji9","slide":6,"name":"矩形 27","text":"设计周期缩短","textPreview":"设计周期缩短","textChars":6,"textLines":1,"bbox":[900,536,302,46]}
+{"kind":"slide","id":"sl/gnmp4jqx","slide":7,"title":"科研成果","textShapes":13}
+{"kind":"textbox","id":"sh/f2d0b6lc","slide":7,"name":"slide-title","text":"科研成果","textPreview":"科研成果","textChars":4,"textLines":1,"bbox":[54,42,1110,58]}
+{"kind":"shape","id":"sh/cb2tkvap","slide":7,"name":"矩形 1","bbox":[54,112,58,5]}
+{"kind":"textbox","id":"sh/dcbud0ra","slide":7,"name":"page-number","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1170,650,54,24]}
+{"kind":"textbox","id":"sh/ydkbm5sv","slide":7,"name":"footer","text":"王宇航｜感谢各位面试官","textPreview":"王宇航｜感谢各位面试官","textChars":11,"textLines":1,"bbox":[54,650,500,24]}
+{"kind":"textbox","id":"sh/zedcfa9g","slide":7,"name":"矩形 4","text":"代表性成果","textPreview":"代表性成果","textChars":5,"textLines":1,"bbox":[58,158,500,38]}
+{"kind":"textbox","id":"sh/kzmdova1","slide":7,"name":"矩形 5","text":"《基于参数化曲线的曲线OPC》｜光学学报，作者1\nEnforcement of curvy MRC compliance...｜Optics Express，作者2\nParametric curvilinear OPC using B-splines...｜IWAPS，作者1\n参数化曲线掩模OPC方法｜发明专利，作者3","textPreview":"《基于参数化曲线的曲线OPC》｜光学学报，作者1 | Enforcement of curvy MRC compliance...｜Optics Express，作者2 | Parametric curvilinear OPC using B-splines...｜IWAP...","textChars":160,"textLines":4,"bbox":[40,258,600,260]}
+{"kind":"shape","id":"sh/l0vuh0rm","slide":7,"name":"直线连接符 6","bbox":[684,170,0,390]}
+{"kind":"textbox","id":"sh/eh0ba1sr","slide":7,"name":"矩形 7","text":"岗位匹配","textPreview":"岗位匹配","textChars":4,"textLines":1,"bbox":[744,158,430,38]}
+{"kind":"textbox","id":"sh/fi9c369c","slide":7,"name":"矩形 8","text":"算法能力","textPreview":"算法能力","textChars":4,"textLines":1,"bbox":[744,226,135,32]}
+{"kind":"textbox","id":"sh/baxkjqlk","slide":7,"name":"矩形 9","text":"物理建模与数值优化","textPreview":"物理建模与数值优化","textChars":9,"textLines":1,"bbox":[892,226,300,48]}
+{"kind":"textbox","id":"sh/a9ojq5kz","slide":7,"name":"矩形 10","text":"工程能力","textPreview":"工程能力","textChars":4,"textLines":1,"bbox":[744,324,135,32]}
+{"kind":"textbox","id":"sh/xcz2l03q","slide":7,"name":"矩形 11","text":"Python验证与C++实现","textPreview":"Python验证与C++实现","textChars":14,"textLines":1,"bbox":[892,324,300,48]}
+{"kind":"textbox","id":"sh/cbq1sv25","slide":7,"name":"矩形 12","text":"数据能力","textPreview":"数据能力","textChars":4,"textLines":1,"bbox":[744,422,135,32]}
+{"kind":"textbox","id":"sh/n6x0fqlo","slide":7,"name":"矩形 13","text":"仿真自动化与预测模型","textPreview":"仿真自动化与预测模型","textChars":10,"textLines":1,"bbox":[892,422,300,48]}
+{"kind":"textbox","id":"sh/o761ov2t","slide":7,"name":"矩形 16","text":"谢谢","textPreview":"谢谢","textChars":2,"textLines":1,"bbox":[58,532,520,70]}
