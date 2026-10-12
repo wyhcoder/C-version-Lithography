@@ -56,6 +56,7 @@ void check_single_micro(bool socs, double learning_rate = 0.01, int iterations =
     options.iterations = iterations;
     options.learning_rate = learning_rate;
     options.verbose = false;
+    options.retain_final_masks = true;
     const auto result = optimizer.optimize(target, options);
 
     // 独立用原单块 Imaging/Gradient 执行完整轨迹，核对各轮 loss 和返回的历史最佳 theta/mask。
@@ -82,6 +83,9 @@ void check_single_micro(bool socs, double learning_rate = 0.01, int iterations =
         }
     }
     require(best_mask.isApprox(result.global_mask, 1e-12), "returned global mask is not the minimum-loss state");
+    // 大步长样例的末轮与最佳轮不同；单独核对固定次数快照，避免对照实验误用最佳轮。
+    const Eigen::MatrixXd final_mask = (0.5 * (1.0 + theta.array().cos())).matrix();
+    require(final_mask.isApprox(result.final_local_masks[0], 1e-12), "retained final mask differs from standalone trajectory");
     require(best_mask.isApprox(result.local_masks[0], 1e-12), "returned local mask is not the minimum-loss state");
     require(best_theta.isApprox(result.local_theta[0], 1e-12), "returned theta does not belong to best mask");
     require(result.best_iteration == best_iteration && std::abs(result.best_loss - best_loss) < 1e-11, "best metadata differs");
@@ -92,51 +96,82 @@ void check_single_micro(bool socs, double learning_rate = 0.01, int iterations =
     }
 }
 
-void check_one_update(bool socs) {
+void check_guard_only_update(bool socs) {
     const auto meta = Partition::build(24, 24, 2, 2, 4, 2);
     const auto cache = make_cache(meta.tile_size, socs);
     const auto target = make_target();
     FullChipCTMOptimizer optimizer(meta, cache, 0.25, 8.0);
     FullChipCTMOptions options;
-    options.iterations = 1;
+    options.iterations = 2;
     options.learning_rate = 0.01;
     options.verbose = false;
     options.gradient_options.enable_cept = true;
     options.gradient_options.enable_grad_fusion = true;
+    // 故意传 false，确认 full-chip CTM 内部强制 Guard-only，而不是仅修改默认配置。
+    options.gradient_options.cept_guard_only = false;
+    auto expected_options = options.gradient_options;
+    expected_options.cept_guard_only = true;
     auto expected_theta = Partition::extract_all(CTM_Optimizer::initialize_theta(target), meta);
-    std::vector<Eigen::MatrixXd> initial_masks;
-    for (const auto& theta : expected_theta) initial_masks.push_back((0.5 * (1.0 + theta.array().cos())).matrix());
+    const auto initial_theta = expected_theta;
     MicroGradientExchange exchange(meta, cache, 0.25, 8.0);
-    const auto initial = exchange.compute(initial_masks, target, options.gradient_options);
     const auto result = optimizer.optimize(target, options);
-    require(result.best_iteration == 1, "one-step update test did not improve over initialization");
-
-    // 独立逐像素核对更新窗口内的链式梯度及步长，不复用 optimizer 的 Eigen block 更新表达式。
-    for (const auto& tile : meta.tiles) {
-        const auto& window = tile.update_local;
-        for (int y = window.y0; y < window.y1; ++y) {
-            for (int x = window.x0; x < window.x1; ++x) {
-                double& theta = expected_theta[tile.id](y, x);
-                theta += options.learning_rate * 0.5 * initial.locals[tile.id].mask_gradient(y, x) * std::sin(theta);
-                require(std::abs(theta - result.local_theta[tile.id](y, x)) < 1e-13, "Core/Guard theta update is incorrect");
+    double best_loss = std::numeric_limits<double>::infinity(), core_dual_difference = 0.0;
+    int best_iteration = 0;
+    std::vector<Eigen::MatrixXd> best_theta;
+    bool active_cept = false;
+    // 第一轮初值的 CEPT 为零；至少推进两轮，才能核对非零 CEPT 的驱动确实不包含反向 Core 端。
+    for (int iteration = 0; iteration <= options.iterations; ++iteration) {
+        std::vector<Eigen::MatrixXd> masks;
+        for (const auto& theta : expected_theta) masks.push_back((0.5 * (1.0 + theta.array().cos())).matrix());
+        const auto evaluation = exchange.compute(masks, target, expected_options);
+        require(std::abs(evaluation.loss - result.history[iteration].loss) < 1e-10, "CTM differs from Guard-only trajectory");
+        if (evaluation.loss < best_loss) {
+            best_loss = evaluation.loss;
+            best_iteration = iteration;
+            best_theta = expected_theta;
+        }
+        for (const auto& tile : meta.tiles) {
+            const auto& core = tile.core_local;
+            require(evaluation.locals[tile.id].cept_mask_gradient.block(core.y0, core.x0, core.rows(), core.cols()).norm() == 0.0,
+                    "Guard-only CEPT directly drives Core pixels");
+        }
+        if (evaluation.cept_loss > 0.0 && iteration < options.iterations) {
+            active_cept = true;
+            auto dual_options = expected_options;
+            dual_options.cept_guard_only = false;
+            const auto dual = exchange.compute(masks, target, dual_options);
+            for (const auto& tile : meta.tiles) {
+                const auto& core = tile.core_local;
+                core_dual_difference += dual.locals[tile.id].cept_mask_gradient.block(
+                    core.y0, core.x0, core.rows(), core.cols()).norm();
+            }
+        }
+        if (iteration == options.iterations) break;
+        // 逐像素执行链式更新，不复用 optimizer 的 Eigen block 表达式；窗口外从不赋新值。
+        for (const auto& tile : meta.tiles) {
+            const auto& window = tile.update_local;
+            for (int y = window.y0; y < window.y1; ++y) {
+                for (int x = window.x0; x < window.x1; ++x) {
+                    double& theta = expected_theta[tile.id](y, x);
+                    theta += options.learning_rate * 0.5 * evaluation.locals[tile.id].mask_gradient(y, x) * std::sin(theta);
+                }
             }
         }
     }
-    const auto global_theta = Partition::assemble_global(expected_theta, meta);
-    double halo_change = 0.0, cept_loss = 0.0;
+    require(active_cept && core_dual_difference > 1e-12, "fixture does not distinguish Guard-only from dual-end CEPT");
+    require(result.best_iteration == best_iteration && best_iteration > 0, "Guard-only update selected the wrong best state");
+    double cept_loss = 0.0;
     for (const auto& tile : meta.tiles) {
+        require(result.local_theta[tile.id].isApprox(best_theta[tile.id], 1e-12), "Core/Guard theta update is incorrect");
         const auto& window = tile.update_local;
         for (int y = 0; y < meta.tile_size; ++y) {
             for (int x = 0; x < meta.tile_size; ++x) {
                 if (y >= window.y0 && y < window.y1 && x >= window.x0 && x < window.x1) continue;
-                const int gy = ((tile.tile_global.y0 + y) % meta.height + meta.height) % meta.height;
-                const int gx = ((tile.tile_global.x0 + x) % meta.width + meta.width) % meta.width;
-                require(result.local_theta[tile.id](y, x) == global_theta(gy, gx), "outer Halo did not use latest neighbor Core");
-                halo_change += std::abs(result.local_masks[tile.id](y, x) - initial_masks[tile.id](y, x));
+                require(result.local_theta[tile.id](y, x) == initial_theta[tile.id](y, x), "theta outside Core + Guard changed");
             }
         }
         require(result.local_masks[tile.id].isApprox((0.5 * (1.0 + result.local_theta[tile.id].array().cos())).matrix(), 1e-12),
-                "theta and mask are inconsistent after Halo refresh");
+                "theta and mask belong to different states");
         for (const auto& neighbor : tile.neighbors) {
             const auto& a = neighbor.my_guard_local;
             const auto& b = neighbor.neighbor_overlap_local;
@@ -144,12 +179,11 @@ void check_one_update(bool socs) {
                           result.local_masks[neighbor.id].block(b.y0, b.x0, b.rows(), b.cols())).squaredNorm();
         }
     }
-    require(halo_change > 0.0, "Halo refresh test did not exercise any changed context");
     require(cept_loss > 0.0, "updated independent Guards produced no CEPT mismatch");
-    require(std::abs(cept_loss - result.history.back().cept_loss) < 1e-12, "CEPT did not evaluate post-update pixels");
+    require(std::abs(cept_loss - result.history[best_iteration].cept_loss) < 1e-12, "CEPT does not belong to best-state masks");
     require(result.global_mask.isApprox(Partition::assemble_global(result.local_masks, meta), 1e-12), "Core assembly differs");
-    const auto final = exchange.compute(result.local_masks, target, options.gradient_options);
-    require(final.loss == result.history.back().loss, "last history loss is stale");
+    const auto selected = exchange.compute(result.local_masks, target, expected_options);
+    require(std::abs(selected.loss - result.best_loss) < 1e-10, "best history loss is stale");
 }
 
 void check_parallel_workflow(bool socs) {
@@ -212,9 +246,9 @@ int main() {
         for (const bool socs : {false, true}) {
             check_single_micro(socs);
             check_single_micro(socs, 100.0, 8, true);
-            check_one_update(socs);
+            check_guard_only_update(socs);
             check_parallel_workflow(socs);
-            std::cout << (socs ? "SOCS" : "Abbe") << ": fixed-step CTM, best state recovery, CEPT, Halo and parallel workflow passed\n";
+            std::cout << (socs ? "SOCS" : "Abbe") << ": fixed-step CTM, Guard-only CEPT, frozen Halo and parallel workflow passed\n";
         }
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

@@ -189,11 +189,27 @@ Eigen::MatrixXd Gradient::pe_gradient_with_penalty(
 Eigen::MatrixXd Gradient::pe_gradient_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
                                                 const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
                                                 double penalty_threshold, const Eigen::MatrixXd& loss_window) {
+    return pe_gradient_with_penalty(wafer_image, target_image, electric_field, penalty, penalty_threshold, loss_window, 1.0);
+}
+
+Eigen::MatrixXd Gradient::pe_gradient_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                                const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
+                                                double penalty_threshold, const Eigen::MatrixXd& loss_window, double pe_weight) {
+    return pe_gradient_with_penalty(wafer_image, target_image, electric_field, penalty, penalty_threshold,
+                                    loss_window, pe_weight, loss_window);
+}
+
+Eigen::MatrixXd Gradient::pe_gradient_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                                const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
+                                                double penalty_threshold, const Eigen::MatrixXd& pe_window, double pe_weight,
+                                                const Eigen::MatrixXd& penalty_window) {
     const Eigen::ArrayXXd residual = wafer_image.array() - target_image.array();
     const Eigen::ArrayXXd background = (target_image.array() < 0.5).cast<double>();
     const Eigen::ArrayXXd excess = (wafer_image.array() - penalty_threshold).cwiseMax(0.0);
-    const Eigen::MatrixXd dLdI = ((residual + penalty * background * excess) * wafer_image.array() *
-                                  (1.0 - wafer_image.array()) * loss_window.array()).matrix();
+    // 先按各项自己的窗口与权重合成 WI 误差，再经过 sigmoid 和光学伴随，不增加第二次 FFT 反传。
+    const Eigen::MatrixXd dLdI = ((pe_weight * residual * pe_window.array() +
+                                  penalty * background * excess * penalty_window.array()) *
+                                  wafer_image.array() * (1.0 - wafer_image.array())).matrix();
     return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
 }
 
@@ -206,19 +222,18 @@ Eigen::MatrixXd Gradient::epe_gradient(
 {
     const int N = _cache.N;
 
-    // ── 计算 aerial image 的梯度模 G = |∇I|（视为常量）────────────────
-    // 梯度差分步长=1（像素单位），EPE 最后乘 dx 转 nm
+    // 差分步长为 1 像素，G 表示每像素的光强斜率；绝对 EPE=|I-τ|*dx/G。
+    // 按平方 EPE 构造驱动，本次反传冻结 G，不包含光强斜率随 mask 变化的导数。
     Eigen::MatrixXd aerial_dx = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 1);
     Eigen::MatrixXd aerial_dy = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 0);
     Eigen::MatrixXd G_magnitude =
         (aerial_dx.array().square() + aerial_dy.array().square()).sqrt();
 
-    // ── EPE 对 aerial image 的梯度 dL/dI ──────────────────────────────
-    //   EPE²(p) = (I-τ)² · dx² / G²       (G = |∇I|，视为常量)
-    //   d(EPE²)/dI = 2·(I-τ) · dx² / G²
-    //
-    //   只在 EPE 测量点处非零
+    // L_sq=Σ weight_epe*(I-τ)²*dx²/G²，故 dL_sq/dI=2*weight_epe*(I-τ)*dx²/G²。
+    // 这是优化驱动的近似目标；Loss::epe_loss() 仍报告绝对 EPE，二者有意使用不同形式。
+    // EP 使用当前 N×N 局部图像的像素索引 (y,x)；误差信号仅在 EP 非零，反传结果覆盖完整 mask。
     Eigen::MatrixXd dLdI = Eigen::MatrixXd::Zero(N, N);
+    const double dx2 = dx * dx; // dx 为物理长度/像素；传入 nm/像素时，平方 EPE 及其 mask 梯度含 nm² 尺度。
 
     const auto& eps = eps_result.eps;
     const auto& w   = eps_result.weight_epe;
@@ -230,11 +245,11 @@ Eigen::MatrixXd Gradient::epe_gradient(
         double G = G_magnitude(y, x);
         if (G < 1e-12) G = 1e-12;   // 防止除零
         double G2 = G * G;
-        dLdI(y, x) += w(i) * 2.0 * diff  / G2;
+        dLdI(y, x) += w(i) * 2.0 * diff * dx2 / G2;
     }
 
-    // EPE 直接对 aerial image 求导，不经过 sigmoid，因此 output_scale=1。
-    return _backpropagate(dLdI, electric_field, 1.0);
+    // dLdI 已包含平方误差求导的 2；I=|E|² 对实值 mask 求导还产生一个 2，不含 sigmoid 的 alpha。
+    return _backpropagate(dLdI, electric_field, 2.0);
 }
 
 }  // namespace litho

@@ -1,6 +1,7 @@
 #include "micro_gradient_exchange.h"
 #include "lithography_simulator.h"
 #include "loss.h"
+#include "level_set_utils.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <algorithm>
@@ -41,6 +42,64 @@ litho::ImagingCache make_cache(int n, bool socs) {
         cache.optical_kernels_frequency.push_back(std::move(kernel));
     }
     return cache;
+}
+
+// 用冻结基准光强斜率的平方 EPE 做 mask 有限差分；不以报告的绝对 EPE 验证这个近似驱动。
+// 覆盖 Abbe/SOCS、非单位光源权重和、不同 dx、重复 EP、零/非整数 EP 权重及 EP 之外的 mask 像素。
+void check_squared_epe_gradient(bool socs) {
+    using namespace litho;
+    constexpr int n = 12;
+    constexpr double threshold = 0.18, alpha = 8.0, step = 1e-6;
+    auto cache = make_cache(n, socs);
+    cache.source_ws << 0.3, 0.9;
+    Imaging imaging(cache);
+    Gradient gradient(cache, threshold, alpha);
+    Eigen::MatrixXd mask(n, n), direction(n, n);
+    for (int y = 0; y < n; ++y) {
+        for (int x = 0; x < n; ++x) {
+            mask(y, x) = 0.43 + 0.12 * std::sin(0.31 * x + 0.27 * y) + 0.05 * std::cos(0.52 * x - 0.23 * y);
+            direction(y, x) = std::sin(0.71 * x - 0.43 * y) + 0.4 * std::cos(0.37 * x + 0.61 * y);
+        }
+    }
+    direction /= direction.norm();
+    EpsResult eps;
+    eps.eps.resize(6, 2);
+    eps.eps << 0, 1, 3, 5, 7, 9, 11, 10, 3, 5, 8, 2; // 局部像素索引，包含边缘和重复 EP。
+    eps.weight_epe.resize(6);
+    eps.weight_epe << 1.0, 0.0, 0.4, 2.0, 0.7, 1.3;
+    eps.weight_meef = Eigen::RowVectorXd::Ones(6);
+    const auto baseline = imaging.compute(mask, threshold, alpha);
+    const auto electric_field = imaging.get_electric_field(); // 后续扰动成像会覆盖内部缓存，保存基准电场副本。
+    const Eigen::MatrixXd gx = LevelSetUtils::_gradient_1d(baseline.aerial_image, 1.0, 1);
+    const Eigen::MatrixXd gy = LevelSetUtils::_gradient_1d(baseline.aerial_image, 1.0, 0);
+    const Eigen::MatrixXd frozen_slope = (gx.array().square() + gy.array().square()).sqrt().max(1e-12).matrix();
+    const auto unit_gradient = gradient.epe_gradient(baseline.aerial_image, electric_field, eps, threshold, 1.0);
+    require(unit_gradient.norm() > 1e-8, "squared EPE test gradient is zero");
+    Eigen::MatrixXd pixel_direction = Eigen::MatrixXd::Zero(n, n);
+    pixel_direction(6, 6) = 1.0; // 此 mask 像素不是 EP，但仍能经光学系统改变 EP 的光强。
+    for (double dx : {1.0, 4.0, 8.0}) {
+        const auto analytic = gradient.epe_gradient(baseline.aerial_image, electric_field, eps, threshold, dx);
+        require((analytic - dx * dx * unit_gradient).norm() < 1e-11 * analytic.norm(), "squared EPE lacks dx squared");
+        auto frozen_loss = [&](const Eigen::MatrixXd& trial) {
+            const auto image = imaging.compute(trial, threshold, alpha);
+            double loss = 0.0;
+            for (int i = 0; i < eps.eps.rows(); ++i) {
+                const int y = static_cast<int>(eps.eps(i, 0)), x = static_cast<int>(eps.eps(i, 1));
+                const double epe = (image.aerial_image(y, x) - threshold) * dx / frozen_slope(y, x);
+                loss += eps.weight_epe(i) * epe * epe;
+            }
+            return loss;
+        };
+        const Eigen::MatrixXd aligned = analytic / analytic.norm();
+        for (const auto& test_direction : std::vector<Eigen::MatrixXd>{direction, aligned, pixel_direction}) {
+            const double numeric =
+                (frozen_loss(mask + step * test_direction) - frozen_loss(mask - step * test_direction)) / (2.0 * step);
+            const double expected = (analytic.array() * test_direction.array()).sum();
+            require(std::abs(numeric - expected) < 5e-6 * std::max(1.0, std::abs(expected)),
+                    "frozen squared EPE mask finite difference failed");
+        }
+    }
+    std::cout << (socs ? "SOCS" : "Abbe") << ": frozen squared EPE finite differences and dx^2 scaling passed\n";
 }
 
 void check_exchange(const litho::PartitionMeta& meta, const litho::MicroGradientExchangeResult& result) {
@@ -191,8 +250,6 @@ void check_options(bool socs) {
     require(consistent.cept_loss == 0.0, "globally consistent masks have nonzero CEPT");
     for (const auto& local : consistent.locals) require(local.cept_mask_gradient.squaredNorm() == 0.0, "consistent CEPT gradient nonzero");
 
-    double plain_pe = 0.0;
-    const auto pure_pe = exchange.compute(masks, target);
     const EpSelect selector(target, 1.0, 1.0);
     const auto global_eps = selector.select_eps_via(2); // 与当前生产代码的 EP 选择一致，不改变原 C++ 选点规则。
     Imaging direct_imaging(cache);
@@ -201,12 +258,11 @@ void check_options(bool socs) {
         options.loss_type = type;
         const auto result = exchange.compute(masks, target, options);
         require(result.cept_loss > 0.0, "independent masks did not activate CEPT");
-        if (type == MicroLossType::PE) plain_pe = result.data_loss;
-        if (type == MicroLossType::PEPenalty) require(result.data_loss > plain_pe, "background penalty did not activate");
+        if (type == MicroLossType::PEPenalty) require(result.locals.front().bg_penalty_raw > 0.0, "background penalty did not activate");
         if (type == MicroLossType::EPE) require(result.data_loss > 0.0, "EPE selected no active points");
         for (const auto& local : result.locals) {
-            const double expected = type == MicroLossType::EPE ? local.epe_loss : type == MicroLossType::PE_EPE ?
-                options.pe_weight * local.pe_loss + options.epe_weight * local.epe_loss : local.pe_loss;
+            const double expected = type == MicroLossType::EPE ? options.epe_weight * local.epe_loss : type == MicroLossType::PE_EPE ?
+                options.pe_weight * local.pe_loss + options.epe_weight * local.epe_loss : options.pe_weight * local.pe_loss + local.penalty_loss;
             require(std::abs(local.data_loss - expected) < 1e-12, "loss selector used wrong coefficients");
         }
         if (type == MicroLossType::PE || type == MicroLossType::PEPenalty) {
@@ -237,8 +293,13 @@ void check_options(bool socs) {
                     image.aerial_image, direct_imaging.get_electric_field(), eps, 0.25, options.epe_pixel_size);
                 const auto& local = result.locals[tile.id];
                 require(local.epe_loss == direct_loss, "EPE adapter changed existing C++ loss");
-                const Eigen::MatrixXd expected = type == MicroLossType::EPE ? direct :
-                    (options.pe_weight * pure_pe.locals[tile.id].raw_mask_gradient + options.epe_weight * direct).eval();
+                Eigen::MatrixXd expected = options.epe_weight * direct;
+                if (type == MicroLossType::PE_EPE) {
+                    const auto goal = Partition::extract_local_tile(target, tile);
+                    const auto windows = build_micro_loss_windows(goal, tile.core_local, options);
+                    expected += options.pe_weight * direct_gradient.pe_gradient(
+                        image.wafer_image, goal, direct_imaging.get_electric_field(), windows.pe);
+                }
                 require((local.raw_mask_gradient - expected).squaredNorm() == 0.0, "EPE adapter changed existing C++ gradient");
             }
             for (int count : ownership) require(count == 1, "global EP was lost or counted in multiple Cores");
@@ -378,7 +439,58 @@ void check_real_patterns() {
     }
 }
 
-// 独立从成像输出和周期像素坐标验证 LSM 的损失区域；CEPT 以冻结邻居 Core 的本块损失做有限差分。
+// 独立参考：重复 3×3 膨胀等价于检查 L∞ 距离不超过 radius 的主图像素，不调用 OpenCV 或生产窗口函数。
+litho::MicroLossWindows reference_loss_windows(const Eigen::MatrixXd& target, const litho::PartitionRect& region, int radius,
+                                              litho::MicroLossType type = litho::MicroLossType::PE_EPE) {
+    litho::MicroLossWindows windows{Eigen::MatrixXd::Zero(target.rows(), target.cols()),
+                                    Eigen::MatrixXd::Zero(target.rows(), target.cols()),
+                                    Eigen::MatrixXd::Zero(target.rows(), target.cols())};
+    for (int y = region.y0; y < region.y1; ++y) {
+        for (int x = region.x0; x < region.x1; ++x) {
+            bool main = false;
+            for (int sy = std::max(0, y - radius); sy <= std::min(static_cast<int>(target.rows()) - 1, y + radius); ++sy) {
+                for (int sx = std::max(0, x - radius); sx <= std::min(static_cast<int>(target.cols()) - 1, x + radius); ++sx) {
+                    main |= target(sy, sx) > 0.5;
+                }
+            }
+            windows.epe(y, x) = type == litho::MicroLossType::PE_EPE ? main : 1.0;
+            windows.pe(y, x) = type == litho::MicroLossType::PE_EPE ? !main :
+                               type == litho::MicroLossType::PEPenalty ? target(y, x) > 0.5 : 1.0;
+            windows.penalty(y, x) = target(y, x) < 0.5;
+        }
+    }
+    return windows;
+}
+
+void check_loss_windows() {
+    using namespace litho;
+    Eigen::MatrixXd target = Eigen::MatrixXd::Zero(12, 15);
+    target(0, 0) = 1.0; // 局部数组边缘按 0 填充，不从对侧周期膨胀。
+    target(2, 2) = 0.5; // threshold 为严格大于 0.5。
+    target.block(4, 5, 4, 4).setOnes();
+    target(5, 6) = 0.0; // 膨胀会填充小孔。
+    target(1, 8) = 1.0; // region 外的主图也能膨胀进入评价区域，验证先膨胀再裁窗口。
+    const PartitionRect region{2, 11, 3, 14};
+    MicroGradientOptions options;
+    options.loss_type = MicroLossType::PE_EPE;
+    for (int radius : {0, 1, 2, 4}) {
+        options.main_region_dilation_pixels = radius;
+        const auto actual = build_micro_loss_windows(target, region, options);
+        const auto expected = reference_loss_windows(target, region, radius);
+        require(actual.pe == expected.pe && actual.epe == expected.epe, "dilated main/background window mismatch");
+        require((actual.pe.array() * actual.epe.array()).sum() == 0.0, "main and background windows overlap");
+        require(actual.pe.sum() + actual.epe.sum() == region.rows() * region.cols(), "windows miss evaluation pixels");
+    }
+    for (const auto type : {MicroLossType::PE, MicroLossType::PEPenalty, MicroLossType::EPE}) {
+        options.loss_type = type;
+        const auto actual = build_micro_loss_windows(target, region, options);
+        const auto expected = reference_loss_windows(target, region, 0, type);
+        require(actual.pe == expected.pe && actual.epe == expected.epe && actual.penalty == expected.penalty,
+                "single loss type used a dilated/background-only PE window");
+    }
+}
+
+// 独立从膨胀邻域、成像输出和周期坐标验证 LSM 分区；CEPT 以冻结邻居 Core 的本块损失做有限差分。
 void check_lsm_regions(bool socs) {
     using namespace litho;
     const auto meta = Partition::build(32, 32, 2, 2, 8, 3);
@@ -396,6 +508,10 @@ void check_lsm_regions(bool socs) {
     MicroGradientOptions options;
     options.loss_region = MicroLossRegion::CoreGuard;
     options.cept_guard_only = true;
+    options.collect_core_metrics = true; // 与 LSM 一致：未启用的 EPE/背景项也应报告损失区域内的原始值。
+    options.pe_weight = 0.3;
+    options.epe_weight = 0.2;
+    options.penalty_weight = 0.7;
     for (const auto type : {MicroLossType::PE, MicroLossType::PEPenalty}) {
         options.loss_type = type;
         const auto result = exchange.compute(masks, target, options);
@@ -406,11 +522,38 @@ void check_lsm_regions(bool socs) {
             const auto image = imaging.compute(masks[tile.id], 0.25, 8.0);
             const auto local_target = Partition::extract_local_tile(target, tile);
             const auto& w = tile.update_local;
-            const Eigen::MatrixXd wafer = image.wafer_image.block(w.y0, w.x0, w.rows(), w.cols());
-            const Eigen::MatrixXd goal = local_target.block(w.y0, w.x0, w.rows(), w.cols());
-            const double expected = type == MicroLossType::PE ? Loss::pe_loss(wafer, goal) :
-                Loss::pe_loss_with_penalty(wafer, goal, options.penalty_weight, options.penalty_threshold);
-            require(std::abs(expected - result.locals[tile.id].data_loss) < 1e-12, "data loss includes pixels outside Core + Guard");
+            const auto windows = reference_loss_windows(local_target, w, options.main_region_dilation_pixels, type);
+            double pe = 0.0, bg = 0.0, core_pe = 0.0, core_bg = 0.0;
+            const auto& c = tile.core_local;
+            for (int y = w.y0; y < w.y1; ++y) {
+                for (int x = w.x0; x < w.x1; ++x) {
+                    const double error = windows.pe(y, x) * std::pow(image.wafer_image(y, x) - local_target(y, x), 2);
+                    const double penalty = windows.penalty(y, x) *
+                        std::pow(std::max(image.wafer_image(y, x) - options.penalty_threshold, 0.0), 2);
+                    pe += error;
+                    bg += penalty;
+                    if (y >= c.y0 && y < c.y1 && x >= c.x0 && x < c.x1) {
+                        core_pe += error;
+                        core_bg += penalty;
+                    }
+                }
+            }
+            const auto& local = result.locals[tile.id];
+            const double expected = options.pe_weight * pe + (type == MicroLossType::PEPenalty ? options.penalty_weight * bg : 0.0);
+            require(std::abs(expected - local.data_loss) < 1e-10, "selected PE/PEPenalty windows or weights are wrong");
+            require(std::abs(local.core.pe_loss - core_pe) < 1e-10 && std::abs(local.core.bg_penalty_raw - core_bg) < 1e-10,
+                    "Core metrics use the wrong selected loss window");
+            const auto expected_gradient = type == MicroLossType::PE ?
+                (options.pe_weight * gradient.pe_gradient(image.wafer_image, local_target, imaging.get_electric_field(), windows.pe)).eval() :
+                gradient.pe_gradient_with_penalty(image.wafer_image, local_target, imaging.get_electric_field(),
+                                                  options.penalty_weight, options.penalty_threshold, windows.pe,
+                                                  options.pe_weight, windows.penalty);
+            require((expected_gradient - local.raw_mask_gradient).norm() < 1e-10, "masked output adjoint mismatch");
+            // 输出评价窗口之外的 mask 像素仍能影响窗口内成像；光学反传后不能再裁成 PE 窗口。
+            require((local.raw_mask_gradient.array() * (1.0 - windows.pe.array())).matrix().norm() > 1e-6,
+                    "optical gradient was cropped to the background window");
+            require((local.raw_mask_gradient.array() * (1.0 - Partition::update_window(tile).array())).matrix().norm() > 1e-6,
+                    "fixture must exercise nonzero gradient outside Core + Guard");
         }
         check_joint_derivative(exchange, masks, target, options);
     }
@@ -425,8 +568,11 @@ void check_lsm_regions(bool socs) {
         std::vector<int> indices;
         const auto& w = tile.update_local;
         const auto& core = tile.core_local;
+        const auto goal = Partition::extract_local_tile(target, tile);
+        const auto windows = reference_loss_windows(goal, w, options.main_region_dilation_pixels, MicroLossType::EPE);
         for (int y = w.y0; y < w.y1; ++y) {
             for (int x = w.x0; x < w.x1; ++x) {
+                if (windows.epe(y, x) == 0.0) continue;
                 const int uy = tile.tile_global.y0 + y, ux = tile.tile_global.x0 + x;
                 const int gy = (uy % 32 + 32) % 32, gx = (ux % 32 + 32) % 32;
                 for (int i = 0; i < global_eps.eps.rows(); ++i) {
@@ -447,13 +593,41 @@ void check_lsm_regions(bool socs) {
         }
         const auto image = imaging.compute(masks[tile.id], 0.25, 8.0);
         const double expected = Loss::epe_loss(image.aerial_image, eps, 0.25, options.epe_pixel_size);
-        const auto expected_gradient = gradient.epe_gradient(
+        const Eigen::MatrixXd expected_gradient = options.epe_weight * gradient.epe_gradient(
             image.aerial_image, imaging.get_electric_field(), eps, 0.25, options.epe_pixel_size);
         require(std::abs(expected - epe.locals[tile.id].epe_loss) < 1e-11 * std::max(1.0, expected), "wrong Core + Guard EPE loss");
+        require(epe.locals[tile.id].epe_count == count, "EPE point count excludes Guard overlap or periodic copies");
         require((expected_gradient - epe.locals[tile.id].raw_mask_gradient).norm() < 1e-11 * std::max(1.0, expected_gradient.norm()),
                 "wrong Core + Guard EPE gradient");
     }
     require(guard_points > 0 && periodic_points > 0, "EPE fixture missed Guard or periodic points");
+
+    // 只优化 PE 时，EPE 与背景仍报告原始总值；统计不能额外加入它们的 loss 或梯度。
+    options.loss_type = MicroLossType::PE;
+    const auto pe_only = exchange.compute(masks, target, options);
+    auto plain_options = options;
+    plain_options.collect_core_metrics = false;
+    const auto plain = exchange.compute(masks, target, plain_options);
+    require(pe_only.loss == plain.loss, "reporting inactive terms changed PE objective");
+    for (const auto& tile : meta.tiles) {
+        const auto& local = pe_only.locals[tile.id];
+        require(local.epe_count == epe.locals[tile.id].epe_count && local.epe_loss == epe.locals[tile.id].epe_loss,
+                "inactive EPE statistics differ from the same-region EPE evaluation");
+        require(local.raw_mask_gradient == plain.locals[tile.id].raw_mask_gradient, "reporting inactive terms changed PE gradient");
+        const auto image = imaging.compute(masks[tile.id], 0.25, 8.0);
+        const auto goal = Partition::extract_local_tile(target, tile);
+        const auto& w = tile.update_local;
+        const auto windows = reference_loss_windows(goal, w, options.main_region_dilation_pixels, MicroLossType::PE);
+        double background = 0.0;
+        for (int y = w.y0; y < w.y1; ++y) {
+            for (int x = w.x0; x < w.x1; ++x) {
+                if (windows.pe(y, x) == 0.0 || goal(y, x) >= 0.5) continue;
+                const double excess = std::max(image.wafer_image(y, x) - options.penalty_threshold, 0.0);
+                background += excess * excess;
+            }
+        }
+        require(std::abs(local.bg_penalty_raw - background) < 1e-10, "inactive background metric uses the wrong region");
+    }
 
     options.loss_type = MicroLossType::PE_EPE;
     options.pe_weight = options.epe_weight = 0.0; // 隔离 CEPT，验证它只驱动本块 Guard。
@@ -483,7 +657,163 @@ void check_lsm_regions(bool socs) {
                                 exchange.compute(minus, target, options).locals[tile.id].loss) / (2.0 * step);
         require(std::abs(numeric - options.cept_weight * expected.norm()) < 1e-8, "Guard-only CEPT local finite difference failed");
     }
-    std::cout << (socs ? "SOCS" : "Abbe") << ": Core+Guard PE/EPE, periodic EP and Guard-only CEPT passed\n";
+    std::cout << (socs ? "SOCS" : "Abbe") << ": per-type PE/BG/EPE windows, full adjoint, periodic EP and Guard-only CEPT passed\n";
+}
+
+// 同一矩形跨越四个 Core，边上中点可落在分界线上；验证选点、唯一归属和不重叠 Core 的独立评价。
+void check_core_metrics_and_sampling(bool socs) {
+    using namespace litho;
+    const auto meta = Partition::build(32, 32, 2, 2, 8, 3);
+    const auto cache = make_cache(meta.tile_size, socs);
+    Eigen::MatrixXd target = Eigen::MatrixXd::Zero(32, 32), mask(32, 32);
+    target.block(8, 8, 16, 16).setOnes();
+    for (int y = 0; y < 32; ++y) {
+        for (int x = 0; x < 32; ++x) mask(y, x) = 0.4 + 0.1 * std::sin(0.29 * x) + 0.08 * std::cos(0.19 * y);
+    }
+    auto masks = Partition::extract_all(mask, meta);
+    for (int id = 0; id < masks.size(); ++id) masks[id].array() += 0.02 * id;
+    MicroGradientExchange exchange(meta, cache, 0.25, 8.0);
+    Imaging imaging(cache);
+    MicroGradientOptions options;
+    options.loss_region = MicroLossRegion::CoreGuard;
+    options.collect_core_metrics = true;
+    options.epe_interval_line = 1; // 密集采样确保 metal 原选点中包含零权重 EP，实际覆盖原蓝色点。
+    options.epe_interval_corner = 1;
+    options.epe_pixel_size = 2.0;
+    for (const auto sampling : {MicroEpeSampling::Contact, MicroEpeSampling::Metal}) {
+        options.epe_sampling = sampling;
+        const auto selected = select_micro_epe_points(target, options);
+        const EpSelect selector(target, 1.0, 1.0);
+        const auto original = sampling == MicroEpeSampling::Contact ? selector.select_eps_via(0) : selector.select_eps_others(1, 1);
+        if (sampling == MicroEpeSampling::Contact) {
+            require(selected.eps.rows() == 4 && selected.weight_epe.minCoeff() == 1.0, "contact must use only four side midpoints");
+            int j = 0;
+            for (int i = 0; i < original.eps.rows(); ++i) {
+                if (original.weight_epe(i) == 0.0) continue;
+                require(selected.eps.row(j++) == original.eps.row(i), "contact midpoint moved from original C++ selector");
+            }
+        } else {
+            check_loss_windows();
+            require(selected.eps == original.eps && selected.weight_epe == original.weight_epe,
+                    "metal selector changed original coordinates or weights");
+            auto all_options = options;
+            all_options.epe_all_eps = true;
+            all_options.loss_type = MicroLossType::EPE;
+            const auto all_eps = select_micro_epe_points(target, all_options);
+            require(all_eps.eps == selected.eps && all_eps.weight_meef == selected.weight_meef,
+                    "all-EP option changed point coordinates or MEEF weights");
+            require(all_eps.weight_epe.minCoeff() == 1.0, "all-EP option left zero EPE weights");
+            const int blue_count = static_cast<int>((original.weight_epe.array() == 0.0).count());
+            require(blue_count > 0, "fixture must contain originally blue zero-weight EPs");
+
+            // 单块使全局/局部 EP 坐标相同；直接核对原蓝色点对 mask 梯度的新增贡献。
+            const auto one_meta = Partition::build(32, 32, 1, 1, 0, 0);
+            MicroGradientExchange one_exchange(one_meta, cache, 0.25, 8.0);
+            auto original_options = all_options;
+            original_options.epe_all_eps = false;
+            const auto old_result = one_exchange.compute(mask, target, original_options, false);
+            const auto all_result = one_exchange.compute(mask, target, all_options, false);
+            require(old_result.loss == all_result.loss && old_result.locals[0].core.ep_count == all_result.locals[0].core.ep_count,
+                    "all-EP weighting changed absolute EPE statistics or point count");
+            const auto image = imaging.compute(mask, 0.25, 8.0);
+            Gradient direct_gradient(cache, 0.25, 8.0);
+            EpsResult blue_eps = all_eps;
+            blue_eps.weight_epe = (original.weight_epe.array() == 0.0).cast<double>().matrix();
+            const auto blue_gradient = direct_gradient.epe_gradient(
+                image.aerial_image, imaging.get_electric_field(), blue_eps, 0.25, options.epe_pixel_size);
+            const Eigen::MatrixXd change = all_result.locals[0].raw_mask_gradient - old_result.locals[0].raw_mask_gradient;
+            require(blue_gradient.norm() > 1e-6, "originally blue EPs contributed no gradient");
+            require((change - blue_gradient).norm() < 1e-10 * std::max(1.0, blue_gradient.norm()),
+                    "all-EP mode did not include the original blue points in gradient");
+        }
+        auto all_options = options;
+        all_options.epe_all_eps = true;
+        const auto all_eps = select_micro_epe_points(target, all_options);
+        require(all_eps.eps == selected.eps && all_eps.weight_epe.minCoeff() == 1.0,
+                "unifying weights must keep Contact's four-midpoint selection");
+        // 纯 PE 模式也必须统计 Core EPE；统计开关不能改变实际 loss 或梯度。
+        options.loss_type = MicroLossType::PE;
+        const auto evaluation = exchange.compute(masks, target, options, false);
+        auto no_metrics = options;
+        no_metrics.collect_core_metrics = false;
+        const auto plain = exchange.compute(masks, target, no_metrics, false);
+        require(evaluation.loss == plain.loss, "Core diagnostics changed objective");
+        std::vector<int> owners(selected.eps.rows(), 0);
+        int core_count = 0;
+        for (const auto& tile : meta.tiles) {
+            const auto image = imaging.compute(masks[tile.id], 0.25, 8.0);
+            const auto& core = tile.core_global;
+            double pe = 0.0, main_pe = 0.0, bg = 0.0;
+            // 独立逐个全局 Core 像素取值，不复用 evaluator 的矩阵切片。
+            for (int y = core.y0; y < core.y1; ++y) {
+                for (int x = core.x0; x < core.x1; ++x) {
+                    const double wi = image.wafer_image(y - tile.tile_global.y0, x - tile.tile_global.x0);
+                    const double error = std::pow(wi - target(y, x), 2);
+                    pe += error;
+                    if (target(y, x) > 0.5) main_pe += error;
+                    if (target(y, x) < 0.5) bg += std::pow(std::max(0.0, wi - options.penalty_threshold), 2);
+                }
+            }
+            EpsResult eps = selected;
+            int count = 0;
+            for (int i = 0; i < selected.eps.rows(); ++i) {
+                const int y = selected.eps(i, 0), x = selected.eps(i, 1);
+                if (y < core.y0 || y >= core.y1 || x < core.x0 || x >= core.x1) continue;
+                eps.eps.row(count) << y - tile.tile_global.y0, x - tile.tile_global.x0;
+                eps.weight_epe(count) = selected.weight_epe(i);
+                eps.weight_meef(count++) = selected.weight_meef(i);
+                ++owners[i];
+            }
+            eps.eps.conservativeResize(count, 2);
+            eps.weight_epe.conservativeResize(count);
+            eps.weight_meef.conservativeResize(count);
+            const double epe = Loss::epe_loss(image.aerial_image, eps, 0.25, options.epe_pixel_size);
+            const auto& local = evaluation.locals[tile.id];
+            require(std::abs(local.core.pe_loss - pe) < 1e-10 && std::abs(local.core.bg_penalty_raw - bg) < 1e-10,
+                    "Core pixel diagnostics include Guard or use wrong coefficients");
+            require(std::abs(local.core.pe_penalty_loss - options.pe_weight * main_pe - options.penalty_weight * bg) < 1e-10,
+                    "Core PEPenalty includes ordinary background PE");
+            require(local.core.ep_count == count && std::abs(local.core.epe_loss - epe) < 1e-10, "wrong Core EPE ownership/value");
+            require(local.core.epe_mean == (count == 0 ? 0.0 : epe / count), "wrong Core EPE mean");
+            require(local.core.data_loss == local.core.pe_loss, "pure PE Core metric contains inactive penalties");
+            require(local.raw_mask_gradient == plain.locals[tile.id].raw_mask_gradient, "Core diagnostics changed gradient");
+            core_count += count;
+        }
+        require(core_count == selected.eps.rows(), "Core EP count differs from selected global EP count");
+        for (int count : owners) require(count == 1, "boundary EP must belong to exactly one Core");
+    }
+
+    // 先以非零背景惩罚验证 pe_weight=0/0.3 时的独立系数；零 PE 权重不能屏蔽背景驱动。
+    options.loss_type = MicroLossType::PEPenalty;
+    options.epe_sampling = MicroEpeSampling::Contact;
+    options.penalty_weight = 0.7;
+    options.epe_weight = 0.0;
+    for (double pe_weight : {0.0, 0.3}) {
+        options.pe_weight = pe_weight;
+        check_joint_derivative(exchange, masks, target, options);
+    }
+    // 混合模式只含背景 PE 和主图 EPE；penalty_weight 非零也不能带入背景惩罚项。
+    options.loss_type = MicroLossType::PE_EPE;
+    check_joint_derivative(exchange, masks, target, options);
+    const auto pixel = exchange.compute(masks, target, options, false);
+    options.epe_weight = 0.2;
+    const auto mixed = exchange.compute(masks, target, options, false);
+    auto epe_options = options;
+    epe_options.loss_type = MicroLossType::EPE;
+    const auto epe = exchange.compute(masks, target, epe_options, false);
+    for (const auto& tile : meta.tiles) {
+        const auto& m = mixed.locals[tile.id];
+        const auto& p = pixel.locals[tile.id];
+        require(std::abs(m.data_loss - p.data_loss - epe.locals[tile.id].data_loss) < 1e-10,
+                "mixed loss added background penalty or ignored EPE weight");
+        const Eigen::MatrixXd expected = p.raw_mask_gradient + epe.locals[tile.id].raw_mask_gradient;
+        require((m.raw_mask_gradient - expected).norm() < 1e-10, "mixed mode changed original EPE gradient");
+        const auto& c = m.core;
+        require(m.penalty_loss == 0.0, "PE_EPE must not contain a penalty term");
+        require(std::abs(c.data_loss - options.pe_weight * c.pe_loss -
+                         options.epe_weight * c.epe_loss) < 1e-10, "wrong weighted Core mixed objective");
+    }
+    std::cout << (socs ? "SOCS" : "Abbe") << ": contact/metal EP, unique Core diagnostics and two-term mixture passed\n";
 }
 
 } // namespace
@@ -494,12 +824,14 @@ int main(int argc, char** argv) {
             check_real_patterns();
         } else {
             for (bool socs : {false, true}) {
+                check_squared_epe_gradient(socs);
                 check_case(litho::Partition::build(24, 28, 2, 3, 5, 2), socs);
                 check_case(litho::Partition::build(25, 31, 3, 3, 5, 2), socs);
                 check_case(litho::Partition::build(16, 16, 2, 2, 0, 0), socs);
                 check_case(litho::Partition::build(8, 10, 1, 1, 12, 4), socs);
                 check_options(socs);
                 check_lsm_regions(socs);
+                check_core_metrics_and_sampling(socs);
             }
         }
     } catch (const std::exception& error) {

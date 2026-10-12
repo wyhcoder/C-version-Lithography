@@ -41,11 +41,26 @@ public:
                                            const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
                                            double penalty_threshold, const Eigen::MatrixXd& loss_window);
 
-    // EPE 损失对掩模的梯度
+    // 独立加权：L = Σ loss_window * [pe_weight*(WI-target)^2 + penalty*背景*max(WI-penalty_threshold,0)^2]。
+    // 沿用原 PE/背景惩罚反传，合并后只反传一次；支持 pe_weight=0 时只优化背景惩罚。
+    Eigen::MatrixXd pe_gradient_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                           const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
+                                           double penalty_threshold, const Eigen::MatrixXd& loss_window, double pe_weight);
+
+    // PE/背景窗口均为完整局部尺寸：先分别限定输出误差并乘各自系数，再共用一次光学反传。
+    // PEPenalty 传入未膨胀主图 PE 窗口和原始背景窗口；返回完整 Halo 梯度，不在 mask 域裁切。
+    Eigen::MatrixXd pe_gradient_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                           const std::vector<Eigen::MatrixXcd>& electric_field, double penalty,
+                                           double penalty_threshold, const Eigen::MatrixXd& pe_window, double pe_weight,
+                                           const Eigen::MatrixXd& penalty_window);
+
+    // 平方 EPE 的近似 mask 驱动：Σ weight_epe*(I-threshold)²*dx²/G²，反传时冻结每像素斜率 G。
+    // 输出为完整 N×N mask 梯度；Loss::epe_loss() 独立报告绝对 EPE，本接口不求该统计量的严格导数。
     //   aerial_image   : N×N 空间像（未经 sigmoid）
-    //   eps_result     : EPE 测量点（含坐标和权重）
+    //   electric_field : 当前 mask 成像得到的各核复电场，须与 aerial_image 同一次成像。
+    //   eps_result     : EP 的局部像素索引 (y,x) 及 weight_epe；允许多个 EP 的贡献累加到同一像素。
     //   threshold      : 显影阈值 τ
-    //   dx             : 像素尺寸
+    //   dx             : 各向同性物理长度/像素；1 表示以像素计量，传入 nm/像素时平方 EPE 使用 nm²。
     Eigen::MatrixXd epe_gradient(
         const Eigen::MatrixXd& aerial_image,
         const std::vector<Eigen::MatrixXcd>& electric_field,

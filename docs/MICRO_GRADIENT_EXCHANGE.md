@@ -34,20 +34,26 @@ auto result = evaluator.compute(global_mask, global_target, options);
 
 ## 损失选择
 
-`loss_region=Core` 默认仅在 Core 评价，供 CTM 使用；`CoreGuard` 在 Core + Guard 的完整矩形内评价，供 LSM 使用。
-两种区域的反传结果都覆盖完整局部 mask，包括 Halo。下表的“区域”指当前所选损失区域。
+`loss_region=Core` 仅在 Core 评价，是全芯片 CTM 的默认规则；
+`CoreGuard` 在 Core + Guard 的完整矩形内评价，LSM 固定使用此范围，损失窗口由 `loss_type` 决定。
+两种区域的反传结果都覆盖完整局部 mask，包括 Halo。
+PE 不划分主图/背景；PEPenalty 使用未膨胀主图 PE 和未膨胀背景惩罚两个窗口。
+仅 PE_EPE 先对完整局部 `target>0.5` 做 3×3 膨胀，再截所选区域得到 EPE 窗口，外部为 PE 窗口。
+`main_region_dilation_pixels=2` 表示向外扩 2 像素，不改变原始 EP 选点坐标。
+窗口限制输出误差和 EP 的评价位置，光学反传后保留完整梯度，更新窗口由优化器单独控制。
 
 | `loss_type` | 数据损失 |
 | --- | --- |
-| `PE` | 区域内 `Σ(W - T)²` |
-| `PEPenalty` | PE 加上区域内背景的 `penalty_weight * Σ max(W - penalty_threshold, 0)²` |
-| `EPE` | 区域内 EP 上，原 C++ `Loss::epe_loss()` 返回的绝对 EPE 之和 |
-| `PE_EPE` | `pe_weight * PE + epe_weight * EPE` |
+| `PE` | `pe_weight * Σ[全部区域] (W - T)²` |
+| `PEPenalty` | `pe_weight * Σ[target>0.5] (W - T)² + penalty_weight * Σ[target<0.5] max(W - penalty_threshold, 0)²` |
+| `EPE` | `epe_weight * 主图轮廓 EP 的原 C++ 绝对 EPE 之和` |
+| `PE_EPE` | `pe_weight * 膨胀主图外背景 PE + epe_weight * 膨胀主图内 EP 的 EPE` |
 
-混合权重直接乘入 loss 和梯度，不自动归一化。背景为 `target < 0.5`。
+仅支持这四种类型；所有启用项的配置权重同时乘入 loss 和梯度，单项模式也读取权重，不自动归一化。
+EPE 保留之前指定的平方 EPE 近似驱动，报告损失仍为绝对 EPE，不是该统计量的严格导数。
 
-EPE 的 EP 按当前代码使用 `EpSelect::select_eps_via(2)` 从全局目标轮廓选取。
-全芯片适配筛选所选区域内的 EP，并减去局部矩阵原点，将全局 EP 转成局部坐标，原 EP 权重保持不变。
+EP 从全局 target 选取：Via 调用 `select_eps_via(2)`，Contact 仅保留 `select_eps_via(0)` 的四边中点，Metal 调用原 `select_eps_others()`。
+`epe_all_eps` 可以在选点后统一权重为 1；全芯片适配筛选 EPE 窗口内的 EP，减去局部矩阵原点转为局部坐标。
 Core 模式下每个 EP 归属于一个 Core；CoreGuard 模式允许重叠评价，并为芯片边界外的周期 Guard 提供对应 EP 副本。
 随后直接调用已有 C++ 接口：
 
@@ -58,8 +64,10 @@ gradient.epe_gradient(aerial_image, electric_field, local_eps, threshold, option
 
 `Loss::epe_loss()` 的公式为 `Σ |I - threshold| / (|gradient(I)| + 1e-12) * dx`，不对 EP 加权。
 `epe_pixel_size` 直接作为 `dx` 传入；1 表示像素，设为像素的 nm 尺度时 loss 单位为 nm。
-梯度沿用现有 `Gradient::epe_gradient(aerial, electric_field, eps, threshold, dx)`：按 `weight_epe` 加权、采用平方误差形式并将梯度模视为常量。
-该原接口的当前实现未把 `dx` 乘入梯度。此模块保持原有 loss 和梯度计算规则，不另外定义平方 EPE 或平滑分母。
+梯度使用 `Gradient::epe_gradient(aerial, electric_field, eps, threshold, dx)`：
+平方 EPE 驱动为 `Σ weight_epe*(I-threshold)^2*dx^2/G^2`，其中 `G` 由步长 1 像素的空间差分获得，本次反传冻结 `G`。
+2026-10-10 补入了 `dx^2`，并在光学反传末端使用系数 2，计入强度 `I=|E|^2` 对实值 mask 的导数。
+报告的 loss 仍为绝对 EPE；平方 EPE 的冻结分母驱动有意与报告指标不同，不作为绝对 EPE 的严格梯度。
 
 ## CEPT
 
@@ -73,7 +81,7 @@ CEPT = Σ diff²
 总 loss 为 `data_loss + cept_weight * cept_loss`。本块 Guard 的导数为 `2 * diff`。
 默认 `cept_guard_only=false`，同时收集邻居 Guard 约束对本块 Core 的另一端贡献；此模式的 CEPT 梯度对应全部独立局部 mask 的总损失。
 `cept_guard_only=true` 时将邻居 Core 作为冻结参考，仅写本块 Guard，不给 Core 添加 CEPT 梯度；这与 Python 的局部协调流程一致。
-LSM 固定使用 Guard-only 模式，CTM 保留默认双端模式。
+全芯片 CTM 和 LSM 均在 optimizer 内固定使用 Guard-only 模式；共享模块独立调用时仍可选择双端模式。
 
 ## 梯度融合与并行
 
@@ -142,5 +150,5 @@ cd build-release
 OMP_NUM_THREADS=4 ./test_micro_gradient_exchange --real
 ```
 
-自动测试覆盖 Abbe/SOCS、两种损失区域的 PE/PEPenalty 有限差分、双端/Guard-only CEPT、EPE 与原 C++ 接口的一致性、Core EP 归属和周期 Guard EP、两种融合模式及串行/并行一致性。
+自动测试覆盖 Abbe/SOCS、膨胀主图形/背景窗口、PE/PEPenalty 的完整局部梯度有限差分、双端/Guard-only CEPT、原 C++ EPE 接口、Core/周期 Guard EP、两种融合模式及串行/并行一致性。
 真实输入检查比较逐块串行与 Micro 并行的结果，报告各一次预热后的计算耗时；使用两张 1024×1024 版图，启用 PE+EPE、CEPT 和融合，划分为 8×8 Micro、Halo 64、Guard 30。

@@ -1,10 +1,15 @@
 #include "full_chip_imaging_compare.h"
+#include "full_chip_epe.h"
 #include "fft.h"
 #include "lithography_simulator.h"
 #include "loss.h"
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 #ifdef _OPENMP
@@ -124,6 +129,118 @@ void check_full_frame_comparison(int n) {
     require(std::abs(comparison.optimized_pe - Loss::pe_loss(b.wafer_image, target)) < 1e-9, "wrong optimized PE");
 }
 
+// 非方形、不能整除的分区：独立 Guard 必须参与局部成像，回拼时每个全局 Core 像素只写一次。
+void check_micro_comparison() {
+    const auto params = make_params();
+    const auto meta = Partition::build(55, 70, 2, 3, 8, 3);
+    Eigen::MatrixXd target = Eigen::MatrixXd::Zero(meta.height, meta.width);
+    target.block(9, 15, 32, 29).setOnes();
+    Eigen::MatrixXd gray(meta.height, meta.width);
+    for (int y = 0; y < meta.height; ++y) {
+        for (int x = 0; x < meta.width; ++x) gray(y, x) = 0.15 + 0.4 * ((x + 2 * y) % 17) / 16.0;
+    }
+    auto locals = Partition::extract_all(gray, meta);
+    for (const auto& tile : meta.tiles) {
+        const auto& u = tile.update_local;
+        const auto& c = tile.core_local;
+        for (int y = u.y0; y < u.y1; ++y) {
+            for (int x = u.x0; x < u.x1; ++x) {
+                if (y < c.y0 || y >= c.y1 || x < c.x0 || x >= c.x1) locals[tile.id](y, x) = 0.8 + 0.02 * tile.id;
+            }
+        }
+    }
+    const Grid grid(meta.tile_size, 8.0, 1.35, 193.0);
+    const auto& coords = grid.grid_coords();
+    const Pupil pupil(LithographySimulator::_make_pupil_params(params), coords.Fx_2d, coords.Fy_2d);
+    const Source source(LithographySimulator::_make_source_params(params, coords.Fx_1d));
+    const LithoPrepare prepare(grid, pupil, source, true);
+    const auto parallel = compare_micro_imaging(params, meta, prepare.cache(), target, locals, true);
+    const auto serial = compare_micro_imaging(params, meta, prepare.cache(), target, locals, false);
+    require(parallel.mode == FullChipImagingMode::MicroCore, "wrong imaging mode");
+    require(parallel.grid_size == meta.tile_size && parallel.image_rows == 55 && parallel.image_cols == 70,
+            "local optics and global image dimensions were mixed");
+    require(parallel.micro_count == 6, "wrong Micro count");
+    require((parallel.optimized_mask - gray).norm() == 0.0, "Core gray mask was changed");
+    require((parallel.target_image.aerial_image - serial.target_image.aerial_image).norm() == 0.0, "parallel target AI changed");
+    require((parallel.target_image.wafer_image - serial.target_image.wafer_image).norm() == 0.0, "parallel target WI changed");
+    require((parallel.optimized_image.aerial_image - serial.optimized_image.aerial_image).norm() == 0.0, "parallel AI changed");
+    require((parallel.optimized_image.wafer_image - serial.optimized_image.wafer_image).norm() == 0.0, "parallel WI changed");
+
+    Imaging reference(prepare.cache());
+    double guard_effect = 0.0;
+    for (const auto& tile : meta.tiles) {
+        const auto baseline = reference.compute(Partition::extract_local_tile(target, tile), params.resist.threshold, params.resist.alpha);
+        const auto optimized = reference.compute(locals[tile.id], params.resist.threshold, params.resist.alpha);
+        const auto collapsed = reference.compute(Partition::extract_local_tile(gray, tile), params.resist.threshold, params.resist.alpha);
+        require((optimized.aerial_image - parallel.optimized_local_aerial_images[tile.id]).norm() == 0.0,
+                "saved local AI lost independent Guard state");
+        // 按全局/局部坐标逐像素核对，独立于 assemble_global() 的切片实现。
+        for (int y = tile.core_global.y0; y < tile.core_global.y1; ++y) {
+            for (int x = tile.core_global.x0; x < tile.core_global.x1; ++x) {
+                const int ly = y - tile.tile_global.y0, lx = x - tile.tile_global.x0;
+                require(parallel.target_image.aerial_image(y, x) == baseline.aerial_image(ly, lx), "wrong baseline Core AI");
+                require(parallel.target_image.wafer_image(y, x) == baseline.wafer_image(ly, lx), "wrong baseline Core WI");
+                require(parallel.optimized_image.aerial_image(y, x) == optimized.aerial_image(ly, lx), "wrong optimized Core AI");
+                require(parallel.optimized_image.wafer_image(y, x) == optimized.wafer_image(ly, lx), "wrong optimized Core WI");
+                guard_effect += std::abs(optimized.aerial_image(ly, lx) - collapsed.aerial_image(ly, lx));
+            }
+        }
+    }
+    require(guard_effect > 1e-3, "test did not distinguish independent Guard from re-extracted global mask");
+    const double pe = (parallel.optimized_image.wafer_image - target).squaredNorm();
+    require(std::abs(parallel.optimized_pe - pe) < 1e-10, "assembled PE counted overlapping Halo/Guard");
+}
+
+// 人为制造块间强度跳变；线性局部 AI 的解析斜率必须用于 Core 边缘 EP，不能在拼接 AI 上求导。
+void check_micro_ep_epe() {
+    const auto meta = Partition::build(55, 70, 2, 3, 8, 3);
+    std::vector<Eigen::MatrixXd> ai(meta.tiles.size());
+    for (const auto& tile : meta.tiles) {
+        ai[tile.id].resize(meta.tile_size, meta.tile_size);
+        for (int y = 0; y < meta.tile_size; ++y) {
+            for (int x = 0; x < meta.tile_size; ++x) ai[tile.id](y, x) = 0.1 + 0.01 * y + 0.02 * x + 0.35 * tile.id;
+        }
+    }
+    const auto directory = std::filesystem::temp_directory_path() / "litho_test_micro_imaging";
+    std::filesystem::create_directories(directory);
+    const int order[] = {4, 0, 5, 1, 3, 2}; // CSV 行序故意不同于 Micro 编号。
+    Eigen::MatrixXd global_eps(6, 2);
+    {
+        std::ofstream points(directory / "ep_points.csv");
+        points << "ep_id,y,x,micro_id,weight_epe,weight_meef\n";
+        for (int i = 0; i < 6; ++i) {
+            const auto& tile = meta.tiles[order[i]];
+            global_eps(i, 0) = tile.core_global.y0;
+            global_eps(i, 1) = tile.core_global.x0;
+            points << 90 - i << ',' << global_eps(i, 0) << ',' << global_eps(i, 1) << ',' << tile.id << ',' << i << ",0.5\n";
+        }
+    }
+    const auto evaluation = save_micro_ep_epe(ai, meta, directory / "ep_points.csv", 0.25, 8.0, directory / "ep_epe.csv");
+    std::ifstream csv(directory / "ep_epe.csv");
+    std::string line;
+    std::getline(csv, line);
+    for (int i = 0; i < 6; ++i) {
+        const auto& tile = meta.tiles[order[i]];
+        const double intensity = ai[tile.id](tile.core_local.y0, tile.core_local.x0);
+        // 当前 EPE 使用 nm 坐标斜率；线性 AI 的解析斜率为 sqrt(0.01²+0.02²)/8，避免放大分母小量。
+        const double expected = std::abs(intensity - 0.25) / (std::sqrt(0.0005) / 8.0 + 1e-12);
+        require(std::abs(evaluation.epe_vector(i) - expected) < 1e-9, "EP slope did not use its full owner Micro AI");
+        std::getline(csv, line);
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream row(line);
+        int id, y, x, owner;
+        double weight, meef, stored_intensity, epe;
+        row >> id >> y >> x >> owner >> weight >> meef >> stored_intensity >> epe;
+        require(id == 90 - i && owner == order[i] && y == global_eps(i, 0) && x == global_eps(i, 1), "EP order/coordinates changed");
+        require(weight == i && meef == 0.5 && stored_intensity == intensity, "EP intensity/weight export changed");
+        require(std::abs(epe - expected) < 1e-9, "unweighted EP export is wrong");
+    }
+    const auto stitched = Loss::evaluate_epe(Partition::assemble_global(ai, meta), global_eps, 0.25, 8.0);
+    require((stitched.epe_vector - evaluation.epe_vector).norm() > 1.0, "test did not detect cross-seam spatial differences");
+    require(std::abs(evaluation.total_epe - evaluation.epe_vector.sum()) < 1e-9, "EP total is wrong");
+    std::filesystem::remove_all(directory);
+}
+
 int main() {
 #ifdef _OPENMP
     omp_set_num_threads(2);
@@ -132,5 +249,7 @@ int main() {
     check_compact_socs();
     check_full_frame_comparison(63);
     check_full_frame_comparison(64);
-    std::cout << "Compact SOCS equivalence and continuous-mask imaging comparison passed.\n";
+    check_micro_comparison();
+    check_micro_ep_epe();
+    std::cout << "Compact SOCS, Micro Core assembly, independent Guard and owner-Micro EP evaluation passed.\n";
 }

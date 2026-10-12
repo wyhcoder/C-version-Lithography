@@ -4,7 +4,7 @@ system:
   pixel_size_nm: 8.0
   grid_size_pixel: 1024
 mask:
-  image_name: contact_1_0_only_1024
+  image_name: metal_3_0_only_1024  # metal_3_0_only_1024 contact_1_0_only_1024
   row_grid_size: 1024
 optics:
   na: 1.35
@@ -20,28 +20,33 @@ resist:
   alpha: 85
 
 full_chip_lsm:
-  target_path: assets/target_pattern/contact_1_0_only_1024.bmp
-  initial_mask_path: result/full_chip_ctm/contact_1_0_only_1024/binary_mask.txt
-  output_dir: result/full_chip_lsm/contact_1_0_only_1024
+  target_path: assets/target_pattern/metal_3_0_only_1024.bmp
+  initial_mask_path: result/full_chip_ctm/metal_3_0_only_1024/binary_mask.txt
+  output_dir: result/full_chip_lsm/metal_3_0_only_1024
   grid_rows: 8                # 共 64 Micro，Core 为 128×128。
   grid_cols: 8
   halo: 64                   # 完整局部成像网格为 256×256。
-  guard: 30                  # 损失和 phi 更新采用 Core + Guard；窗口之外的 phi 保持初始化值。
-  imaging_source_grid_size: 256 # 最终对比的照明积分采样；全图光瞳/FFT 按版图尺寸重建为 1024×1024。
+  guard: 40                  # Core + Guard 内按 loss_type 评价并更新 phi，窗口之外保持初始化值。
+  imaging_source_grid_size: 256 # 仅独立整图评价工具使用；本 demo 的最终成像复用 Micro 光学缓存。
   iterations: 100            # 命令行第二个参数可覆盖更新次数。
-  cfl: 0.8                   # 各块用自己的 CFL dt；不采用固定学习率。
+  cfl: 0.9                   # 各块用自己的 CFL dt；不采用固定学习率。
   curvature_weight: 0.01     # 原 C++ LSM 的曲率系数 b。
-  reinit_interval: 20         # 每 20 次更新重新计算 SDF；0 关闭。
+  reinit_interval: 0         # 每 20 次更新重新计算 SDF；0 关闭。
+  levelset_update_mask_type: gray # gray 使用子像素覆盖率参与成像/梯度/CEPT；binary 保留原 phi >= 0 渲染。
+  levelset_phi_renderer_scale: 4 # phi 每方向双线性放大 4 倍；4×4 子像素二值化再平均，光学网格尺寸不变。
   parallel_micro: true
-  loss_type: PEPenalty            # PE / PEPenalty / EPE / PE_EPE，复用已有 C++ 损失及梯度。
-  pe_weight: 0.5
-  epe_weight: 0.5
-  penalty_weight: 1.0
+  loss_type: PEPenalty      # PE 全区域；PEPenalty 原主图 PE+背景惩罚；EPE 主图 EP；PE_EPE 膨胀主图 EPE+背景 PE。
+  pe_weight: 1.0             # PE / PEPenalty / PE_EPE 的 PE 权重，同时用于损失和梯度，单项也生效。
+  epe_weight: 0.0           # EPE / PE_EPE 的 EPE 权重，同时用于绝对 EPE 报告目标和平方 EPE 速度项。
+  penalty_weight: 1.0        # 仅 PEPenalty 使用；背景为未膨胀的 target < 0.5，不再额外加一份背景 PE。
   penalty_threshold: 0.01
+  main_region_dilation_pixels: 1 # 仅 PE_EPE 使用；3×3 膨胀后主图区域评价 EPE，其余区域评价 PE。
+  epe_sampling: contact       # 配置值为 contact / metal；metal 在 C++ 内部调用 select_eps_others()。
+  epe_all_eps: true          # 与 MEEF 的 wepe_all_eps 一样，选点后将全部 weight_epe 设为 1。
   epe_interval_line: 6
   epe_interval_corner: 2
   enable_cept: true
-  cept_weight: 0.5
+  cept_weight: 1.0
   enable_grad_fusion: true
   fusion_mode: Average       # Average / Linear；仅融合 Guard 的数据梯度。
   fusion_weight_owner: 0.5

@@ -16,6 +16,10 @@ namespace litho {
         return (w.array() - t.array()).square().sum();
     }
 
+    double Loss::pe_loss(const Eigen::MatrixXd& w, const Eigen::MatrixXd& t, const Eigen::MatrixXd& loss_window) {
+        return ((w.array() - t.array()).square() * loss_window.array()).sum();
+    }
+
     double Loss::pe_loss_with_penalty(
         const Eigen::MatrixXd& wafer_image,
         const Eigen::MatrixXd& target_image,
@@ -38,6 +42,25 @@ namespace litho {
         return pe + penalty * penalty_loss;
     }
 
+    double Loss::pe_loss_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                     double penalty, double penalty_threshold, const Eigen::MatrixXd& loss_window) {
+        return pe_loss(wafer_image, target_image, loss_window) +
+               penalty * background_penalty_loss(wafer_image, target_image, penalty_threshold, loss_window);
+    }
+
+    double Loss::background_penalty_loss(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                        double penalty_threshold, const Eigen::MatrixXd& loss_window) {
+        double background = 0.0;
+        // 独立累计背景项；全芯片 PEPenalty 可用主图窗口评价 PE、背景窗口评价本项。
+        for (int i = 0; i < wafer_image.size(); ++i) {
+            if (target_image(i) < 0.5) {
+                const double excess = std::max(0.0, wafer_image(i) - penalty_threshold);
+                background += loss_window(i) * excess * excess;
+            }
+        }
+        return background;
+    }
+
     EpeEvaluation Loss::evaluate_epe(const Eigen::MatrixXd& aerial_image,
                                      const Eigen::MatrixXd& eps,
                                      double threshold,
@@ -55,11 +78,11 @@ namespace litho {
                 "Loss::evaluate_epe: aerial_image must not be empty");
         }
 
-        // 以原 Loss::epe_loss 为准：EPE = |I - threshold| / |gradient(I)| * dx。
+        // dx 是 nm/px；斜率已按物理间距计算，因此 EPE = |I-threshold|/|∇I| 的单位直接是 nm。
         Eigen::MatrixXd aerial_delta_x =
-            LevelSetUtils::_gradient_1d(aerial_image, 1.0, 1);
+            LevelSetUtils::_gradient_1d(aerial_image, dx, 1);
         Eigen::MatrixXd aerial_delta_y =
-            LevelSetUtils::_gradient_1d(aerial_image, 1.0, 0);
+            LevelSetUtils::_gradient_1d(aerial_image, dx, 0);
         Eigen::MatrixXd G_magnitude =
             (aerial_delta_x.array().square() +
              aerial_delta_y.array().square()).sqrt();
@@ -72,7 +95,7 @@ namespace litho {
                                0, static_cast<int>(aerial_image.cols()) - 1);
             result.epe_vector(i) =
                 std::abs(aerial_image(y, x) - threshold) /
-                G_magnitude(y, x) * dx;
+                G_magnitude(y, x) ;
         }
         result.total_epe = result.epe_vector.sum();
         return result;

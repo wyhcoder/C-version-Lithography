@@ -162,9 +162,12 @@ add_library(litho_core STATIC
     source/utils/parametric.cpp
     source/utils/meef_pipeline.cpp
     source/utils/partition.cpp
+    source/utils/partition_visualization.cpp
+    source/utils/mask_continuity.cpp
     source/utils/gradient.cpp
     source/utils/micro_gradient_exchange.cpp
     source/utils/full_chip_imaging_compare.cpp
+    source/utils/full_chip_epe.cpp
     source/utils/simulation_parameters.cpp
     source/utils/sraf_geometry.cpp
     source/utils/sraf_curve.cpp
@@ -178,6 +181,7 @@ add_library(litho_core STATIC
     source/utils/save_txt.cpp
     source/utils/imbinarize.cpp
     source/utils/level_set_utils.cpp
+    source/utils/levelset_mask_renderer.cpp
     source/optimizer/LSM_Optimizer.cpp
     source/utils/pv_band_computer.cpp
     source/optimizer/MEEF_Optimizer.cpp
@@ -260,6 +264,19 @@ add_executable(demo_full_chip_imaging_compare demo/demo_full_chip_imaging_compar
 target_link_libraries(demo_full_chip_imaging_compare litho_core)
 add_executable(demo_full_chip_lsm demo/demo_full_chip_lsm.cpp)
 target_link_libraries(demo_full_chip_lsm litho_core)
+add_executable(demo_full_chip_epe demo/demo_full_chip_epe.cpp)
+target_link_libraries(demo_full_chip_epe litho_core)
+# 在同一 LSM 初始状态分别统计 PE/EPE 的 mask 梯度，不推进优化迭代。
+add_executable(demo_full_chip_gradient_stats demo/demo_full_chip_gradient_stats.cpp)
+target_link_libraries(demo_full_chip_gradient_stats litho_core)
+
+# 在完整 target 上显示真实 Micro 的 Core、Guard 和 Halo 几何，不运行优化或成像。
+add_executable(demo_full_chip_partition demo/demo_full_chip_partition.cpp)
+target_link_libraries(demo_full_chip_partition litho_core)
+
+# 四组 CTM 对照，比较固定更新次数和各组历史最佳状态的实际接缝与 Guard-Core 一致性。
+add_executable(demo_ctm_boundary_ablation demo/demo_ctm_boundary_ablation.cpp)
+target_link_libraries(demo_ctm_boundary_ablation litho_core)
 
 # Level Set Method 优化示例。
 add_executable(demo_LSM demo/demo_LSM.cpp)
@@ -318,6 +335,10 @@ if(BUILD_TESTING)
     target_link_libraries(test_level_set_godunov litho_core)
     add_test(NAME level_set_godunov COMMAND test_level_set_godunov)
 
+    add_executable(test_levelset_mask_renderer tests/test_levelset_mask_renderer.cpp)
+    target_link_libraries(test_levelset_mask_renderer litho_core)
+    add_test(NAME levelset_mask_renderer COMMAND test_levelset_mask_renderer)
+
     add_executable(test_micro_gradient_exchange tests/test_micro_gradient_exchange.cpp)
     target_link_libraries(test_micro_gradient_exchange litho_core)
     add_test(NAME micro_gradient_exchange COMMAND test_micro_gradient_exchange)
@@ -325,6 +346,10 @@ if(BUILD_TESTING)
     add_executable(test_full_chip_ctm tests/test_full_chip_ctm.cpp)
     target_link_libraries(test_full_chip_ctm litho_core)
     add_test(NAME full_chip_ctm COMMAND test_full_chip_ctm)
+
+    add_executable(test_mask_continuity tests/test_mask_continuity.cpp)
+    target_link_libraries(test_mask_continuity litho_core)
+    add_test(NAME mask_continuity COMMAND test_mask_continuity)
 
     add_executable(test_full_chip_imaging_compare tests/test_full_chip_imaging_compare.cpp)
     target_link_libraries(test_full_chip_imaging_compare litho_core)

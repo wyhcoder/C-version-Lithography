@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     const fs::path project = fs::path(__FILE__).parent_path().parent_path();
     const fs::path config = fs::absolute(argc > 1 ? fs::path(argv[1]) : project / "config_full_chip_ctm.yaml");
     const auto root = YAML::LoadFile(config.string());
-    // 根据配置段选择已有 CTM 灰度结果或 LSM 最佳二值结果；评价始终与原始 target 对照。
+    // 根据配置段选择已有 CTM 灰度结果或 LSM 最佳渲染 mask；评价始终与原始 target 对照。
     const bool is_lsm = root["full_chip_lsm"].IsDefined();
     const auto full = root[is_lsm ? "full_chip_lsm" : "full_chip_ctm"];
     const auto params = SimulationParameters::from_yaml(config.string());
@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
     for (int y = 0; y < input.rows; ++y) {
         for (int x = 0; x < input.cols; ++x) target(y, x) = input.at<unsigned char>(y, x) / 255.0;
     }
-    // 读取保存的 double 原值：CTM 为灰度、LSM 为 0/1；忽略 TXT 尺寸注释，保持最佳 mask 的数值。
+    // 读取保存的 double 原值：CTM 和 LSM Gray 都保留灰度，忽略 TXT 尺寸注释，不再次二值化。
     std::ifstream file(mask_path);
     std::string line;
     int y = 0;

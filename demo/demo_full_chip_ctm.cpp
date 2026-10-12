@@ -96,17 +96,19 @@ int main(int argc, char** argv) {
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         fs::create_directories(output);
         // 沿用当前入口设置：峰值最低强度/分位数 0.05，面积阈值/最小间距均为 5 像素。
-        const auto binary_result = Imbinarize::binarize_advanced(result.global_mask, target, 0.05, 0.05, 5, 5);
+        const auto binary_result = Imbinarize::binarize_advanced(result.global_mask, target, 0.125, 0.1, 5, 5);
         save_mask(result.global_mask, binary_result.final_mask, output);
         cv::imwrite((output / "target.bmp").string(), input);
         std::ofstream history(output / "history.csv");
-        // 保留原四列并追加实际加权贡献，使 CSV 与终端日志使用同一套损失分解。
-        history << "iteration,loss,data_loss,cept_loss,pe_contribution,penalty_contribution,epe_contribution,cept_contribution\n"
+        // 原始值与加权贡献分开，CSV 与终端日志共用同一轮、同一套损失窗口。
+        history << "iteration,loss,data_loss,cept_loss,pe_contribution,penalty_contribution,epe_contribution,cept_contribution,"
+                << "pe_loss_raw,bg_penalty_raw,epe_loss_raw\n"
                 << std::setprecision(17);
         for (const auto& row : result.history) {
             history << row.iteration << ',' << row.loss << ',' << row.data_loss << ',' << row.cept_loss
                     << ',' << row.pe_contribution << ',' << row.penalty_contribution
-                    << ',' << row.epe_contribution << ',' << row.cept_contribution << '\n';
+                    << ',' << row.epe_contribution << ',' << row.cept_contribution
+                    << ',' << row.pe_loss_raw << ',' << row.bg_penalty_raw << ',' << row.epe_loss_raw << '\n';
         }
         // 输出图像对应最佳轮；独立记录最佳轮与末轮，history 仍保留整个优化轨迹。
         std::ofstream summary(output / "summary.csv");
@@ -122,9 +124,8 @@ int main(int argc, char** argv) {
         std::cout << "Completed " << options.iterations << " updates in " << seconds << " s, initial loss="
                   << result.history.front().loss << ", best loss=" << result.best_loss << " at iter " << result.best_iteration
                   << ", final loss=" << result.history.back().loss << "\nOutput: " << output << std::endl;
-        // 始终评价最佳轮的连续灰度 mask；全图成像另建 1024 光学系统，不能使用 Micro 的缓存。
-        const int source_size = full["imaging_source_grid_size"].as<int>(meta.tile_size);
-        const auto comparison = compare_full_chip_imaging(params, target, result.global_mask, source_size);
+        // 最佳轮完整局部灰度 mask 分别成像后只拼 Core；复用优化的局部光学 cache，保留各块独立 Guard。
+        const auto comparison = compare_micro_imaging(params, meta, prepare.cache(), target, result.local_masks, options.parallel_micro);
         save_full_chip_imaging_comparison(comparison, output / "imaging_comparison");
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

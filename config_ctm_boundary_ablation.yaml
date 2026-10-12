@@ -1,0 +1,45 @@
+# 四组 CTM 边界对照：除梯度融合/CEPT 开关外，目标、初值、光学、分区、步长和更新次数完全一致。
+system:
+  wavelength_nm: 193.0
+  pixel_size_nm: 8.0
+  grid_size_pixel: 1024
+mask:
+  image_name: metal_3_0_only_1024
+  row_grid_size: 1024
+optics:
+  na: 1.35
+  refractive_index: 1.44
+  aberrations: {4: 0.0}
+source:
+  type: annular
+  sigma_in: 0.6
+  sigma_out: 0.9
+resist:
+  model: threshold
+  threshold: 0.25
+  alpha: 85
+full_chip_ctm:
+  target_path: assets/target_pattern/metal_3_0_only_1024.bmp
+  output_dir: result/ctm_boundary_ablation/metal_4x4_100
+  grid_rows: 4
+  grid_cols: 4
+  halo: 128                    # 每侧像素数；Core 256，完整局部网格 512。
+  guard: 30                    # 每侧像素数；只更新 Core+Guard。
+  iterations: 100
+  learning_rate: 0.9
+  parallel_micro: true
+  loss_type: PE
+  pe_weight: 0.8
+  epe_weight: 0.2
+  penalty_weight: 2.0
+  penalty_threshold: 0.01
+  epe_interval_line: 6
+  epe_interval_corner: 2
+  cept_weight: 1.0
+  fusion_mode: Linear
+  fusion_weight_owner: 0.5
+  fusion_weight_neighbor: 0.5
+ablation:
+  compact_socs: true           # 只裁掉 SVD 中间矩阵的零行；光学网格、光源采样和输出核仍为原值。
+  roi: {y0: 391, y1: 409, x0: 235, x1: 277} # 全局像素半开区间，参考图中的直线穿过 x=255.5 接缝。
+  seam_x: 256                  # 接缝右侧列索引；实际分块边界画在 255.5。

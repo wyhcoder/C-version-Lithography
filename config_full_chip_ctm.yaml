@@ -4,7 +4,7 @@ system:
   pixel_size_nm: 8.0
   grid_size_pixel: 1024
 mask:
-  image_name: contact_1_0_only_1024
+  image_name: contact_1_0_only_1024  # metal_3_0_only_1024 contact_1_0_only_1024
   row_grid_size: 1024
 optics:
   na: 1.35
@@ -25,21 +25,21 @@ full_chip_ctm:
   grid_rows: 8                # Micro 行数；共 8×8=64 个 Micro。
   grid_cols: 8
   halo: 64                   # 每侧 Halo 宽度，单位：像素；Core 128 + 两侧 Halo = 局部 256。
-  guard: 30                  # 每侧独立更新的 Guard 宽度，单位：像素，位于 Halo 内。
-  imaging_source_grid_size: 256 # 最终全图成像模型的照明积分采样；target/优化灰度共享，FFT 网格为 1024。
-  iterations: 50             # 固定更新次数；命令行第二个参数可覆盖。
+  guard: 40                  # 每侧独立更新的 Guard 宽度，单位：像素，位于 Halo 内。
+  imaging_source_grid_size: 256 # 仅独立整图评价工具使用；本 demo 的最终成像复用 Micro 光学缓存。
+  iterations: 50            # 固定更新次数；命令行第二个参数可覆盖。
   learning_rate: 0.9        # theta 域固定步长；命令行第三个参数可覆盖。
   parallel_micro: true
   loss_type: PE              # PE / PEPenalty / EPE / PE_EPE，EPE 沿用现有 C++ 实现。
-  pe_weight: 0.8             # 仅 PE_EPE 使用。
-  epe_weight: 0.2
-  penalty_weight: 2.0
+  pe_weight: 1.0             # PE / PEPenalty / PE_EPE 的 PE 系数，单项也同时用于损失和梯度。
+  epe_weight: 0.0            # EPE / PE_EPE 的 EPE 系数。
+  penalty_weight: 0.0        # 仅 PEPenalty 使用：原主图 PE + 原始背景平方惩罚。
   penalty_threshold: 0.01
   epe_interval_line: 6
   epe_interval_corner: 2
   enable_cept: true
-  cept_weight: 1.1
-  enable_grad_fusion: true  # 可独立开启 Guard 梯度融合。
+  cept_weight: 1.0
+  enable_grad_fusion: true # 可独立开启 Guard 梯度融合。
   fusion_mode: Average       # Average / Linear。
   fusion_weight_owner: 0.5
   fusion_weight_neighbor: 0.5

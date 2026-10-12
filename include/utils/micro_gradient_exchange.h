@@ -10,27 +10,65 @@
 
 namespace litho {
 
-enum class MicroLossType { PE, PEPenalty, EPE, PE_EPE };
+enum class MicroLossType { PE, PEPenalty, EPE, PE_EPE }; // 四种数据损失；CEPT 由独立开关控制。
 enum class MicroLossRegion { Core, CoreGuard }; // 数据损失的输出像素/EP 区域；CoreGuard 包含四个角区。
 enum class GradientFusionMode { Average, Linear };
+enum class MicroEpeSampling { Via, Contact, Metal }; // Via 保留原 CTM 选点；Contact 仅四边中点，Metal 使用原 others 选点。
 
 struct MicroGradientOptions {
-    MicroLossType loss_type = MicroLossType::PE; // 数据项：PE、带背景惩罚的 PE、现有 C++ EPE、PE + EPE。
-    MicroLossRegion loss_region = MicroLossRegion::Core; // CTM 默认只评价 Core；LSM 固定评价 Core + Guard。
-    double pe_weight = 0.5; // 仅 PE_EPE 使用；权重直接乘入 loss 和梯度，不自动归一化。
-    double epe_weight = 0.5; // 仅 PE_EPE 使用。
-    double penalty_weight = 2.0; // PEPenalty 的背景惩罚系数，背景定义为 target < 0.5。
+    MicroLossType loss_type = MicroLossType::PE; // PE 全区域；PEPenalty 主图 PE+背景惩罚；EPE 主图 EP；PE_EPE 膨胀分区。
+    MicroLossRegion loss_region = MicroLossRegion::Core; // CTM 默认评价 Core；LSM 固定 Core + Guard，反传仍覆盖完整 Halo。
+    int main_region_dilation_pixels = 2; // 仅 PE_EPE 使用；target > 0.5 后 3×3 膨胀次数，每次外扩 1 像素，0 不膨胀。
+    double pe_weight = 1.0; // PE、PEPenalty、PE_EPE 的 PE 系数；同一系数用于 loss 和 mask 梯度。
+    double epe_weight = 1.0; // EPE、PE_EPE 的 EPE 系数；不自动归一化，保留原平方 EPE 速度项。
+    double penalty_weight = 2.0; // 仅 PEPenalty 使用的背景惩罚系数，背景为 target < 0.5。
     double penalty_threshold = 0.01; // 背景 WI 超过该值时，加入平方惩罚。
+    MicroEpeSampling epe_sampling = MicroEpeSampling::Via; // LSM 默认 Contact；换 metal 时显式设置 Metal。
+    bool epe_all_eps = false; // 选点后统一 weight_epe=1，让全部已选 EP 参与梯度；与 MEEF 的 wepe_all_eps 同义。
     int epe_interval_line = 6; // 全局目标轮廓直线段的 EP 采样间隔，默认与 C++ EpSelect 一致，单位：像素，须为正数。
     int epe_interval_corner = 2; // EP 选点使用的角部间隔，单位：像素。
     double epe_pixel_size = 1.0; // 直接传给现有 C++ EPE 接口的 dx；1 表示像素，设为 pixel_size_nm 时 loss 的单位为 nm。
+    bool collect_core_metrics = false; // 独立统计 Core 指标及损失区域全部分项，即使该项未参与优化；LSM 固定开启。
     bool enable_cept = false; // 是否加入 Guard 与邻居 Core 的 mask 一致性平方损失。
-    bool cept_guard_only = false; // true 时邻居 Core 作为冻结参考，仅驱动本块 Guard；LSM 固定使用此规则。
+    bool cept_guard_only = false; // true 时邻居 Core 作为冻结参考，仅驱动本块 Guard；全芯片 CTM/LSM 固定使用此规则。
     double cept_weight = 1.1; // CEPT loss 及其梯度使用相同系数。
     bool enable_grad_fusion = false; // 是否融合本块 Guard 梯度与邻居 Core 梯度。
     GradientFusionMode fusion_mode = GradientFusionMode::Average; // 固定权重或沿 Guard 向外增强邻居贡献。
     double fusion_weight_owner = 0.5; // 本块 Guard 原始梯度的权重；融合权重须非负且总和为正。
     double fusion_weight_neighbor = 0.5; // 邻居 Core 原始梯度的权重；实际融合时归一化。
+};
+
+struct MicroLossWeights {
+    double pe, epe, penalty; // 所选模式的有效系数；penalty 只乘 BG_raw，不再包含一份 PE。
+};
+
+struct MicroLossWindows {
+    Eigen::MatrixXd pe; // 完整局部尺寸的 0/1 PE 输出窗口；PE 为全区域，PEPenalty 为原主图，PE_EPE 为膨胀主图外。
+    Eigen::MatrixXd epe; // 同尺寸 0/1 窗口；EP 的局部像素索引落在 1 内才参与 EPE。
+    Eigen::MatrixXd penalty; // 同尺寸的原始背景窗口 target < 0.5，与 PEPenalty 的主图 PE 窗口分开。
+};
+
+// 输入完整局部 target 和局部半开像素区间 region=[y0,y1)×[x0,x1)，返回 PE/EPE 的评价窗口。
+// 仅 PE_EPE 先膨胀完整 target 再截 region，PE/EPE 窗口互斥；纯 EPE 评价 target 轮廓 EP，不膨胀选点。
+MicroLossWindows build_micro_loss_windows(const Eigen::MatrixXd& local_target, const PartitionRect& region,
+                                         const MicroGradientOptions& options);
+
+// 返回所选类型的有效系数；启用项均读取配置权重，未启用项为 0，单项模式也不忽略 YAML 权重。
+MicroLossWeights micro_loss_weights(const MicroGradientOptions& options);
+
+// 从全局 target 选 EP，坐标为全局像素索引 (y,x)。Contact 调用 select_eps_via(0)，仅保留 weight_epe=1 的四边中点。
+// Metal 保留 select_eps_others() 的全部坐标；Via 使用 select_eps_via(2)。epe_all_eps 在选点结束后统一 EPE 权重。
+// Contact 先筛选四边中点再统一权重，不重新加入角点或其他边上点；绘图与计算复用此接口。
+EpsResult select_micro_epe_points(const Eigen::MatrixXd& global_target, const MicroGradientOptions& options);
+
+struct CoreLossMetrics {
+    double pe_loss = 0.0; // PE 评价窗口与 Core 交集内的 Σ(WI-target)^2，不乘混合权重。
+    double bg_penalty_raw = 0.0; // 同一窗口内 target < 0.5 的 Σ max(WI-penalty_threshold,0)^2，不乘 penalty_weight。
+    double pe_penalty_loss = 0.0; // Core 的 pe_weight*原主图 PE + penalty_weight*BG_raw，独立诊断 PEPenalty。
+    double epe_loss = 0.0; // EPE 窗口内且属于 Core 的原 C++ 绝对 EPE 总和；单位由 epe_pixel_size 指定。
+    int ep_count = 0; // Core 所属 EP 个数；全图汇总时各点只统计一次，不含 Guard 周期副本。
+    double epe_mean = 0.0; // epe_loss/ep_count；Core 没有 EP 时为 0。
+    double data_loss = 0.0; // 所选模式只在 Core 上的加权数据损失，不含 CEPT；用于评价，不作为优化目标。
 };
 
 // 一个邻居提供的两条边界梯度；矩阵只存切片数据，放置位置由对应的 MicroNeighbor 决定。
@@ -45,11 +83,14 @@ struct NeighborGradientData {
 
 struct MicroGradientData {
     double loss; // 本块 data_loss + cept_weight * cept_loss；关闭 CEPT 时等于 data_loss。
-    double data_loss; // 所选数据项，在 loss_region 指定的 Core 或 Core + Guard 内评价。
-    double pe_loss; // 未乘混合权重的区域 PE；PEPenalty 模式时包含该区域内的背景惩罚。
-    double penalty_loss; // pe_loss 中已经乘 penalty_weight 的背景惩罚，仅 PEPenalty 非零，用于日志分解。
+    double data_loss; // 所选数据项，在 loss_region 内按 PE/EPE 窗口分别评价。
+    double pe_loss; // 未乘混合权重的普通区域 PE，不含背景惩罚。
+    double penalty_loss; // 已乘 penalty_weight 的背景惩罚贡献；仅 PEPenalty 启用。
+    double bg_penalty_raw; // collect_core_metrics 开启时统计损失区域的原始背景惩罚；不乘系数，未参与优化也统计。
     double epe_loss; // 所选区域内 EP 的原 C++ 绝对 EPE 之和；CoreGuard 的重叠 EP 可被多个 Micro 评价。
+    int epe_count; // 与 epe_loss 同一区域的 EP 数；CoreGuard 包括重叠点和周期副本，用于总 EPE 均值。
     double cept_loss; // 本块 Guard 与邻居 Core 的平方差之和，未乘 cept_weight。
+    CoreLossMetrics core; // collect_core_metrics 开启时，用同一次局部成像独立统计 Core；不改变 loss/梯度。
     Eigen::MatrixXd raw_mask_gradient; // 按现有 PE/EPE 接口计算的数据项梯度，尺寸为 tile_size × tile_size，包含 Halo。
     Eigen::MatrixXd cept_mask_gradient; // 未加权 CEPT 驱动；cept_guard_only 时仅 Guard 非零，否则包含 Core 端贡献。
     Eigen::MatrixXd mask_gradient; // 最终驱动：可选 Guard 融合后的数据梯度 + 加权 CEPT 梯度。

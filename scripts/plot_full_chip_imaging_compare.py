@@ -1,4 +1,4 @@
-"""比较原始 target 和 CTM/LSM 最佳版图在同一套全图光学模型下的成像。"""
+"""比较原始 target 和 CTM/LSM 最佳版图的成像，区分 Micro Core 回拼与历史整图直接成像。"""
 
 import argparse
 import csv
@@ -22,7 +22,7 @@ def plot_comparison(directory: Path) -> None:
         metrics = {row["case"]: row for row in csv.DictReader(file)}
     with (directory / "sampling.csv").open() as file:
         sampling = next(csv.DictReader(file))
-    # 导出指标中的 case 决定阶段；LSM 直接显示最佳二值 mask，AI/WI 始终是原始连续计算值。
+    # 导出指标中的 case 决定阶段；LSM 显示实际成像的最佳 mask（可含覆盖率灰度），AI/WI 保留连续值。
     is_lsm = "optimized_lsm" in metrics
     optimized_case = "optimized_lsm" if is_lsm else "optimized_gray"
     optimized_label = "LSM 优化版图" if is_lsm else "CTM 优化灰度版图"
@@ -33,28 +33,35 @@ def plot_comparison(directory: Path) -> None:
         (optimized_case, optimized_label, [f"{optimized_case}_mask", "optimized_ai", "optimized_wi"]),
     ]
     matrices = {name: [np.loadtxt(directory / f"{key}.txt") for key in keys] for name, _, keys in rows}
-    n = matrices["target"][0].shape[0]
+    height, width = matrices["target"][0].shape
     ai_max = max(values[1].max() for values in matrices.values())
-    spatial = f'{sampling["grid_size"]}×{sampling["grid_size"]}，{sampling["pixel_size_nm"]} nm/像素'
+    # 老结果的 sampling.csv 没有 imaging_mode，沿用它们原来的整图直接成像图注。
+    is_micro = sampling.get("imaging_mode", "full_frame") == "micro_core"
+    grid = sampling["grid_size"]
+    spatial = f'{height}×{width}，{sampling["pixel_size_nm"]} nm/像素'
+    method = f'Micro 成像、Core 回拼（局部光学网格 {grid}×{grid}）' if is_micro else "同一全图光学模型"
+    image_titles = ["输入 mask", "Core 回拼空中像 AI", "Core 回拼连续显影 WI"] if is_micro else [
+        "输入 mask", "全图空中像 AI", "全图连续显影 WI"
+    ]
 
     # 固定中心 256×256 像素窗口；全图与放大图用相同坐标、色标，便于比较边缘。
-    side = min(256, n)
-    start = (n - side) // 2
-    views = [("", (slice(None), slice(None))), ("_zoom", (slice(start, start + side), slice(start, start + side)))]
+    side = min(256, height, width)
+    y0, x0 = (height - side) // 2, (width - side) // 2
+    views = [("", (slice(None), slice(None))), ("_zoom", (slice(y0, y0 + side), slice(x0, x0 + side)))]
     for suffix, view in views:
         fig, axes = plt.subplots(2, 3, figsize=(12, 8), constrained_layout=True)
         for i, (name, label, _) in enumerate(rows):
             for j, matrix in enumerate(matrices[name]):
                 ax = axes[i, j]
                 im = ax.imshow(matrix[view], cmap="gray", vmin=0, vmax=ai_max if j == 1 else 1)
-                ax.set_title(["输入 mask", "全图空中像 AI", "全图连续显影 WI"][j], fontsize=12)
+                ax.set_title(image_titles[j], fontsize=12)
                 ax.set_xticks([])
                 ax.set_yticks([])
                 fig.colorbar(im, ax=ax, shrink=0.75, pad=0.02)
             # 两个 PE 都以原始 target 为目标；放大图仍显示整张全图的 PE。
             axes[i, 0].set_ylabel(f'{label}\n全图 PE={float(metrics[name]["pe"]):.2f}', fontsize=12)
-        crop = f"；中心窗口 [{start},{start + side})" if suffix else ""
-        fig.suptitle(f"同一全图光学模型：原始 target 与 {stage_label}成像 · {spatial}{crop}", fontsize=14)
+        crop = f"；中心窗口 y[{y0},{y0 + side}) x[{x0},{x0 + side})" if suffix else ""
+        fig.suptitle(f"{method}\n原始 target 与 {stage_label}成像 · {spatial}{crop}", fontsize=14)
         fig.savefig(directory / f"{figure_prefix}{suffix}.png", dpi=200)
         plt.close(fig)
     print(f"Saved comparison figures to {directory}")

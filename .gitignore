@@ -24,6 +24,7 @@
 !/tests/test_ctm_optimizer.cpp
 !/tests/test_micro_gradient_exchange.cpp
 !/tests/test_full_chip_ctm.cpp
+!/tests/test_mask_continuity.cpp
 !/tests/test_full_chip_imaging_compare.cpp
 !/tests/test_full_chip_lsm.cpp
 

@@ -27,6 +27,10 @@ namespace litho {
             static double pe_loss(const Eigen::MatrixXd& wafer_image,
                                   const Eigen::MatrixXd& target_image);
 
+            // 三个矩阵同尺寸；loss_window 为 0/1 输出像素窗口，只累计窗口内的 PE，不裁切光学输入。
+            static double pe_loss(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                  const Eigen::MatrixXd& loss_window);
+
             // 使用 loss.cpp 的 EPE 公式，同时返回总 EPE 和逐点 EPE。
             // EPE = |I-threshold| / |gradient(I)| * dx；epe_vector 不加权。
             static EpeEvaluation evaluate_epe(
@@ -59,6 +63,14 @@ namespace litho {
                 double penalty,
                 double penalty_threshold = 0.01);
 
+            // PE 与背景惩罚均限制在 loss_window 内；背景沿用 target < 0.5，返回 PE + penalty*BG_raw。
+            static double pe_loss_with_penalty(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                              double penalty, double penalty_threshold, const Eigen::MatrixXd& loss_window);
+
+            // 同尺寸 WI/target/窗口；返回窗口内原始背景 Σ max(WI-threshold,0)^2，不含 PE 或权重。
+            static double background_penalty_loss(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
+                                                  double penalty_threshold, const Eigen::MatrixXd& loss_window);
+
         protected:
             const Eigen::MatrixXd& _wafer_image;
             const Eigen::MatrixXd& _target_image;
@@ -66,4 +78,3 @@ namespace litho {
             double _alpha;
     };
 }
-

@@ -1,6 +1,7 @@
 #include "micro_gradient_exchange.h"
 
 #include <algorithm>
+#include <opencv2/imgproc.hpp>
 #include "loss.h"
 
 #ifdef _OPENMP
@@ -11,10 +12,10 @@ namespace litho {
 
 namespace {
 
-// region 为局部像素范围 [y0,y1) × [x0,x1)；将该损失区域内的全局 EP 转为局部坐标，保留原权重。
+// region 为局部半开像素范围；筛出区域内且 epe_window=1 的全局 EP，转为局部坐标并保留原权重。
 // Core + Guard 可跨芯片边界，因此同时筛选相邻周期的 EP 副本，与周期提取的 local_target 一致。
 EpsResult region_eps_local(const EpsResult& global_eps, const MicroTile& tile, const PartitionRect& region,
-                          int height, int width, bool periodic_guard) {
+                          int height, int width, bool periodic_guard, const Eigen::MatrixXd& epe_window) {
     std::vector<int> selected;
     std::vector<Eigen::Vector2d> positions;
     const PartitionRect global_region = region.shifted(tile.tile_global.y0, tile.tile_global.x0);
@@ -25,6 +26,10 @@ EpsResult region_eps_local(const EpsResult& global_eps, const MicroTile& tile, c
             for (int px = -periods; px <= periods; ++px) {
                 const double y = global_eps.eps(i, 0) + py * height, x = global_eps.eps(i, 1) + px * width;
                 if (y >= global_region.y0 && y < global_region.y1 && x >= global_region.x0 && x < global_region.x1) {
+                    // 与原 C++ EPE 取样一致：局部 (y,x) 转为整数像素索引，不修改 EP 的实际坐标。
+                    const int local_y = static_cast<int>(y - tile.tile_global.y0);
+                    const int local_x = static_cast<int>(x - tile.tile_global.x0);
+                    if (epe_window(local_y, local_x) == 0.0) continue;
                     selected.push_back(i);
                     positions.emplace_back(y - tile.tile_global.y0, x - tile.tile_global.x0);
                 }
@@ -55,6 +60,68 @@ double linear_strength(NeighborDirection direction, int row, int col, int rows, 
 }
 
 } // namespace
+
+MicroLossWindows build_micro_loss_windows(const Eigen::MatrixXd& local_target, const PartitionRect& region,
+                                         const MicroGradientOptions& options) {
+    const int height = static_cast<int>(local_target.rows()), width = static_cast<int>(local_target.cols());
+    MicroLossWindows windows{Eigen::MatrixXd::Zero(height, width), Eigen::MatrixXd::Zero(height, width),
+                             Eigen::MatrixXd::Zero(height, width)};
+    cv::Mat main_region;
+    if (options.loss_type == MicroLossType::PE_EPE) {
+        main_region.create(height, width, CV_8UC1);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) main_region.at<uchar>(y, x) = local_target(y, x) > 0.5;
+        }
+        // 仅混合模式膨胀主图：3×3 结构元素，局部数组边界外为 0，先膨胀再截到半开评价区间。
+        cv::dilate(main_region, main_region, cv::Mat::ones(3, 3, CV_8UC1), cv::Point(-1, -1),
+                   options.main_region_dilation_pixels, cv::BORDER_CONSTANT, cv::Scalar(0));
+    }
+    for (int y = region.y0; y < region.y1; ++y) {
+        for (int x = region.x0; x < region.x1; ++x) {
+            windows.penalty(y, x) = local_target(y, x) < 0.5;
+            // EP 已由 target 主图轮廓选出；纯 EPE 不用像素前景值过滤，避免丢掉落在轮廓外侧的 EP。
+            windows.epe(y, x) = 1.0;
+            windows.pe(y, x) = options.loss_type == MicroLossType::PEPenalty ? local_target(y, x) > 0.5 : 1.0;
+            if (options.loss_type == MicroLossType::PE_EPE) {
+                windows.epe(y, x) = main_region.at<uchar>(y, x) != 0;
+                windows.pe(y, x) = 1.0 - windows.epe(y, x);
+            }
+        }
+    }
+    return windows;
+}
+
+MicroLossWeights micro_loss_weights(const MicroGradientOptions& options) {
+    return {options.loss_type == MicroLossType::EPE ? 0.0 : options.pe_weight,
+            options.loss_type == MicroLossType::EPE || options.loss_type == MicroLossType::PE_EPE ? options.epe_weight : 0.0,
+            options.loss_type == MicroLossType::PEPenalty ? options.penalty_weight : 0.0};
+}
+
+EpsResult select_micro_epe_points(const Eigen::MatrixXd& global_target, const MicroGradientOptions& options) {
+    const EpSelect selector(global_target, 1.0, 1.0);
+    EpsResult selected;
+    if (options.epe_sampling == MicroEpeSampling::Metal) {
+        selected = selector.select_eps_others(options.epe_interval_line, options.epe_interval_corner);
+    } else if (options.epe_sampling == MicroEpeSampling::Via) {
+        selected = selector.select_eps_via(2);
+    } else {
+        const EpsResult sampled = selector.select_eps_via(0);
+        // r=0 只改变角点偏移，原函数仍返回其他点；先筛选，每个完整矩形 contact 仅留下四边中点。
+        const int count = static_cast<int>((sampled.weight_epe.array() != 0.0).count());
+        selected = {Eigen::MatrixXd(count, 2), Eigen::RowVectorXd(count), Eigen::RowVectorXd(count)};
+        int j = 0;
+        for (int i = 0; i < sampled.eps.rows(); ++i) {
+            if (sampled.weight_epe(i) == 0.0) continue;
+            selected.eps.row(j) = sampled.eps.row(i);
+            selected.weight_epe(j) = sampled.weight_epe(i);
+            selected.weight_meef(j) = sampled.weight_meef(i);
+            ++j;
+        }
+    }
+    // 与 MEEF 的 wepe_all_eps 一致：只统一已选 EP 的 EPE 权重，不改变坐标、数量或 MEEF 权重。
+    if (options.epe_all_eps) selected.weight_epe.setOnes();
+    return selected;
+}
 
 MicroGradientExchange::Worker::Worker(const ImagingCache& cache, double threshold, double alpha)
     : imaging(cache), gradient(cache, threshold, alpha) {}
@@ -89,16 +156,12 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
     result.cept_loss = 0.0;
     const int tile_count = static_cast<int>(_meta.tiles.size());
     result.locals.resize(tile_count);
-    const double pe_weight = options.loss_type == MicroLossType::EPE ? 0.0 :
-                             options.loss_type == MicroLossType::PE_EPE ? options.pe_weight : 1.0;
-    const double epe_weight = options.loss_type == MicroLossType::EPE ? 1.0 :
-                              options.loss_type == MicroLossType::PE_EPE ? options.epe_weight : 0.0;
+    const auto weights = micro_loss_weights(options);
+    const bool evaluate_epe = options.loss_type == MicroLossType::EPE || options.loss_type == MicroLossType::PE_EPE ||
+                              options.collect_core_metrics;
     EpsResult global_eps;
-    if (epe_weight != 0.0) {
-        const EpSelect selector(global_target, 1.0, 1.0);
-        // global_eps = selector.select_eps_others(options.epe_interval_line, options.epe_interval_corner);
-        global_eps = selector.select_eps_via(2);
-    }
+    // Core 统计也需要 EP，即使优化目标仅为 PE；EP 在全局原始 target 上选，不在裁切后的轮廓上重新选。
+    if (evaluate_epe) global_eps = select_micro_epe_points(global_target, options);
 
     // 阶段一：各线程读取同一轮冻结的 mask，各自完成 Micro 的成像和反传，只写自己的 locals[id]。
     // 在外层 Micro 并行区中，Imaging/Gradient 自动关闭内部光学核并行。
@@ -133,39 +196,63 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
             const PartitionRect& region = options.loss_region == MicroLossRegion::CoreGuard ? tile.update_local : tile.core_local;
 
             // 只在指定区域的输出像素上统计误差；光学反传仍覆盖完整局部 mask，包含外围 Halo。
-            Eigen::MatrixXd loss_window = Eigen::MatrixXd::Zero(_meta.tile_size, _meta.tile_size);
-            loss_window.block(region.y0, region.x0, region.rows(), region.cols()).setOnes();
+            const auto windows = build_micro_loss_windows(local_target, region, options);
             MicroGradientData& local = result.locals[tile.id];
             const Eigen::MatrixXd region_wafer = image.wafer_image.block(region.y0, region.x0, region.rows(), region.cols());
             const Eigen::MatrixXd region_target = local_target.block(region.y0, region.x0, region.rows(), region.cols());
-            local.pe_loss = options.loss_type == MicroLossType::PEPenalty ?
-                Loss::pe_loss_with_penalty(region_wafer, region_target, options.penalty_weight, options.penalty_threshold) :
-                Loss::pe_loss(region_wafer, region_target);
-            // 保留原 pe_loss 的计算和总损失，只拆出已加权的背景惩罚供日志显示，避免再次改变优化目标。
-            local.penalty_loss = options.loss_type == MicroLossType::PEPenalty ?
-                local.pe_loss - Loss::pe_loss(region_wafer, region_target) : 0.0;
+            const Eigen::MatrixXd region_pe_window = windows.pe.block(region.y0, region.x0, region.rows(), region.cols());
+            local.pe_loss = Loss::pe_loss(region_wafer, region_target, region_pe_window);
+            // PEPenalty 的主图 PE 和原始背景惩罚使用不同输出窗口；不再从带 PE 的总量中相减。
+            const Eigen::MatrixXd region_bg_window = windows.penalty.block(region.y0, region.x0, region.rows(), region.cols());
+            local.bg_penalty_raw = options.loss_type == MicroLossType::PEPenalty || options.collect_core_metrics ?
+                Loss::background_penalty_loss(region_wafer, region_target, options.penalty_threshold, region_bg_window) : 0.0;
+            local.penalty_loss = weights.penalty * local.bg_penalty_raw;
             local.epe_loss = 0.0;
+            local.epe_count = 0;
             local.cept_loss = 0.0;
             local.raw_mask_gradient = Eigen::MatrixXd::Zero(_meta.tile_size, _meta.tile_size);
             local.cept_mask_gradient = Eigen::MatrixXd::Zero(_meta.tile_size, _meta.tile_size);
-            if (pe_weight != 0.0) {
-                if (options.loss_type == MicroLossType::PEPenalty) {
-                    local.raw_mask_gradient = pe_weight * worker.gradient.pe_gradient_with_penalty(
-                        image.wafer_image, local_target, worker.imaging.get_electric_field(), options.penalty_weight,
-                        options.penalty_threshold, loss_window);
-                } else {
-                    local.raw_mask_gradient = pe_weight * worker.gradient.pe_gradient(
-                        image.wafer_image, local_target, worker.imaging.get_electric_field(), loss_window);
+            if (weights.penalty != 0.0) {
+                local.raw_mask_gradient = worker.gradient.pe_gradient_with_penalty(
+                    image.wafer_image, local_target, worker.imaging.get_electric_field(), weights.penalty,
+                    options.penalty_threshold, windows.pe, weights.pe, windows.penalty);
+            } else if (weights.pe != 0.0) {
+                local.raw_mask_gradient = weights.pe * worker.gradient.pe_gradient(
+                    image.wafer_image, local_target, worker.imaging.get_electric_field(), windows.pe);
+            }
+            if (evaluate_epe) {
+                const EpsResult local_eps = region_eps_local(global_eps, tile, region, _meta.height, _meta.width,
+                                                            options.loss_region == MicroLossRegion::CoreGuard, windows.epe);
+                // EPE 统计与实际损失区域一致；权重为 0 时仍统计均值，只在 EPE 启用时执行其梯度反传。
+                local.epe_count = static_cast<int>(local_eps.eps.rows());
+                local.epe_loss = Loss::epe_loss(image.aerial_image, local_eps, _threshold, options.epe_pixel_size);
+                if (weights.epe != 0.0) {
+                    local.raw_mask_gradient += weights.epe * worker.gradient.epe_gradient(
+                        image.aerial_image, worker.imaging.get_electric_field(), local_eps, _threshold, options.epe_pixel_size);
                 }
             }
-            if (epe_weight != 0.0) {
-                const EpsResult local_eps = region_eps_local(global_eps, tile, region, _meta.height, _meta.width,
-                                                            options.loss_region == MicroLossRegion::CoreGuard);
-                local.epe_loss = Loss::epe_loss(image.aerial_image, local_eps, _threshold, options.epe_pixel_size);
-                local.raw_mask_gradient += epe_weight * worker.gradient.epe_gradient(
-                    image.aerial_image, worker.imaging.get_electric_field(), local_eps, _threshold, options.epe_pixel_size);
+            local.data_loss = weights.pe * local.pe_loss + local.penalty_loss + weights.epe * local.epe_loss;
+            if (options.collect_core_metrics) {
+                const auto& core = tile.core_local; // 本块 Core 的局部像素区间 [y0,y1) × [x0,x1)，各块 Core 不重叠。
+                const Eigen::MatrixXd core_wafer = image.wafer_image.block(core.y0, core.x0, core.rows(), core.cols());
+                const Eigen::MatrixXd core_target = local_target.block(core.y0, core.x0, core.rows(), core.cols());
+                const Eigen::MatrixXd core_pe_window = windows.pe.block(core.y0, core.x0, core.rows(), core.cols());
+                local.core.pe_loss = Loss::pe_loss(core_wafer, core_target, core_pe_window);
+                const Eigen::MatrixXd core_bg_window = windows.penalty.block(core.y0, core.x0, core.rows(), core.cols());
+                local.core.bg_penalty_raw = Loss::background_penalty_loss(
+                    core_wafer, core_target, options.penalty_threshold, core_bg_window);
+                const Eigen::MatrixXd core_main_window = (core_target.array() > 0.5).cast<double>().matrix();
+                local.core.pe_penalty_loss = options.pe_weight * Loss::pe_loss(core_wafer, core_target, core_main_window) +
+                                             options.penalty_weight * local.core.bg_penalty_raw;
+                // Core EP 只筛原图，不加周期副本；在分界线上用半开区间确定唯一所属块。
+                const EpsResult core_eps = region_eps_local(global_eps, tile, core, _meta.height, _meta.width, false, windows.epe);
+                local.core.ep_count = static_cast<int>(core_eps.eps.rows());
+                // 在完整局部 AI 上计算原 EPE 的空间导数，只限制 EP 归属；先裁 Core 会改变边界差分。
+                local.core.epe_loss = Loss::epe_loss(image.aerial_image, core_eps, _threshold, options.epe_pixel_size);
+                local.core.epe_mean = local.core.ep_count == 0 ? 0.0 : local.core.epe_loss / local.core.ep_count;
+                local.core.data_loss = weights.pe * local.core.pe_loss + weights.penalty * local.core.bg_penalty_raw +
+                                       weights.epe * local.core.epe_loss;
             }
-            local.data_loss = pe_weight * local.pe_loss + epe_weight * local.epe_loss;
             local.loss = local.data_loss; // 本块指定区域的数据损失，随后再加入加权 CEPT。
             local.mask_gradient = local.raw_mask_gradient; // 这个是最终驱动的梯度， 还没进行 Guard 融合和 CEPT 约束。
             local.received_neighbors.resize(tile.neighbors.size());
@@ -216,8 +303,8 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
                 local.cept_mask_gradient.block(guard.y0, guard.x0, guard.rows(), guard.cols()) += 2.0 * guard_difference;
 
                 if (!options.cept_guard_only) {
-                    // CTM 的双端模式补上 Σ(B_Guard-A_Core)² 对 A Core 的导数；损失由 B 统计，不重复加。
-                    // LSM 按 Python 将 B Core 作为冻结参考，CEPT 只写 A Guard，不进入此分支。
+                    // 可选双端模式补上 Σ(B_Guard-A_Core)² 对 A Core 的导数；损失由 B 统计，不重复加。
+                    // 全芯片 CTM/LSM 将 B Core 作为冻结参考，CEPT 只写 A Guard，不进入此分支。
                     received.overlap_mask = neighbor_mask.block(overlap_source.y0, overlap_source.x0,
                                                                 overlap_source.rows(), overlap_source.cols());
                     const Eigen::MatrixXd overlap_difference =
