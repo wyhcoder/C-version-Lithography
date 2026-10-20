@@ -21,11 +21,11 @@ public:
                                 const std::vector<Eigen::MatrixXcd>& electric_field);
 
     // 加权 PE：L = Σ loss_window * (wafer_image - target_image)²，窗口尺寸与图像相同。
-    // 全芯片分块时 Core 为 1、Halo 为 0；窗口作用于反传的误差信号，返回的 mask 梯度仍覆盖完整局部区域。
+    // 全芯片分块时 Core 为 1、Halo 为 0；窗口作用于反传的误差信号，
+    // 返回的 mask 梯度仍覆盖完整局部区域。
     Eigen::MatrixXd pe_gradient(const Eigen::MatrixXd& wafer_image, const Eigen::MatrixXd& target_image,
                                const std::vector<Eigen::MatrixXcd>& electric_field, const Eigen::MatrixXd& loss_window);
 
-    Eigen::MatrixXd epe_gradient(const Eigen::MatrixXd& aerial_image, EpsResult eps_result, double threshold, double dx, const std::vector<Eigen::MatrixXcd>& electric_field);
     // 带非主图形区域显影惩罚的梯度
     //   penalty           : 惩罚权重 β
     //   penalty_threshold : 非主图形区域显影阈值
@@ -54,19 +54,17 @@ public:
                                            double penalty_threshold, const Eigen::MatrixXd& pe_window, double pe_weight,
                                            const Eigen::MatrixXd& penalty_window);
 
-    // 平方 EPE 的近似 mask 驱动：Σ weight_epe*(I-threshold)²*dx²/G²，反传时冻结每像素斜率 G。
-    // 输出为完整 N×N mask 梯度；Loss::epe_loss() 独立报告绝对 EPE，本接口不求该统计量的严格导数。
+    // Python 全芯片平方 EPE 的 mask 梯度：Σ weight_epe*epe_pixel²，反传时冻结 EP 处的梯度幅值。
+    // AI 和 |∇AI| 在浮点 EP 坐标处双线性采样，dL/dI 再按同一权重散射到周围最多 4 个像素。
     //   aerial_image   : N×N 空间像（未经 sigmoid）
     //   electric_field : 当前 mask 成像得到的各核复电场，须与 aerial_image 同一次成像。
-    //   eps_result     : EP 的局部像素索引 (y,x) 及 weight_epe；允许多个 EP 的贡献累加到同一像素。
+    //   eps_result     : EP 的局部浮点像素坐标 (y,x) 及 weight_epe；权重为 0 的候选点不产生梯度。
     //   threshold      : 显影阈值 τ
-    //   dx             : 各向同性物理长度/像素；1 表示以像素计量，传入 nm/像素时平方 EPE 使用 nm²。
     Eigen::MatrixXd epe_gradient(
         const Eigen::MatrixXd& aerial_image,
         const std::vector<Eigen::MatrixXcd>& electric_field,
         const EpsResult& eps_result,
-        double threshold,
-        double dx);
+        double threshold);
 
 private:
     // 将损失对 aerial image 的导数通过所有光学核反传到 mask。

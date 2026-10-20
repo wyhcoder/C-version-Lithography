@@ -90,15 +90,16 @@ meef:
 | `sraf_min_cps`     | 8      | SRAF 最少控制点数            |
 | `sraf_min_aera`    | 50     | SRAF 最小连通面积            |
 | `msaa_level`       | 16     | MSAA 采样数                  |
+| `epe_mode`         | pytorch | `pytorch` 对齐 `edge_sampling.py` 和 `epe.py`；`subpixel`、`legacy` 保留原方法 |
 | `curve_type`       | BS     | 主图形周期 B 样条，输入点为控制点 |
 | `sraf_curve_type`  | 同 `curve_type` | 固定 SRAF 单独选择 `BS`、`OA` 或 `CR`；`CR` 为经过输入点的周期向心 Catmull-Rom |
 | `delta`            | 0.15   | 中心差分步长                 |
 | `dilate_radius`    | 2      | 主/SRAF 分离膨胀半径         |
-| `interval_line`    | 5      | 直线段 EP 间隔               |
-| `interval_corner`  | 2      | 拐角 EP 间隔                 |
-| `mid_weight`       | 4.0    | 中点 EP 权重                 |
-| `other_weight`     | 1.0    | 其他 EP 权重                 |
-| `wepe_all_eps`     | false  | `true` 时所有已选 EP 的 `weight_epe=1`，全部计入 WEPE |
+| `interval_line`    | 1.0    | `pytorch` 模式对应 `sample_step_px`，单位 pixel |
+| `interval_corner`  | 0.5    | `pytorch` 模式对应 `corner_margin_px`，单位 pixel |
+| `mid_weight`       | 4.0    | 旧 `legacy/subpixel` 模式的中点 EP 权重；`pytorch` 模式不使用 |
+| `other_weight`     | 1.0    | 旧 `legacy/subpixel` 模式的其他 EP 权重；`pytorch` 模式不使用 |
+| `wepe_all_eps`     | true   | `pytorch` 模式全部点固定为 1；旧模式中 `true` 表示全部计入 WEPE |
 | `optimize_wepe_only` | false | `true` 时 MEEF 矩阵行额外乘 `weight_epe` |
 | `stop_mode`        | fixed_iterations | 跑满 `iter`；`small_step` 可按最大控制点位移提前停止 |
 | `step_tol`         | 0.02   | `small_step` 的位移阈值，单位 pixel |
@@ -122,7 +123,7 @@ demo 会用项目 `.venv/bin/python`（不存在时用 `python3`）将其转换�
 | `main_cps.txt`         | 全部           | 主图形控制点              |
 | `imported_main_cps.txt`| NPY 导入       | `.npy` 的可审计转换结果   |
 | `sraf_cps.txt`         | 全部           | SRAF 控制点               |
-| `eps.txt`              | 全部           | edge points               |
+| `eps.txt`              | 全部           | EP 的局部零基 `(y,x)` 像素坐标；subpixel 模式可含小数 |
 | `eps_weights.txt`      | 全部           | 与 `eps.txt` 逐行对应的 EPE/MEEF 权重 |
 | `sraf_mask.txt`        | 全部           | 实际用于优化的固定 SRAF 掩模 |
 | `main_mask.txt`        | 全部           | 参数化重建的主图形掩模   |

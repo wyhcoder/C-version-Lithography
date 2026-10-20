@@ -3,6 +3,7 @@
 
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -32,6 +33,7 @@ int main(int argc, char** argv) {
         double total = 0.0, maximum = 0.0;
         while (std::getline(input, line)) {
             const double epe = std::stod(line.substr(line.rfind(',') + 1));
+            if (!std::isfinite(epe)) continue;
             ++count;
             total += epe;
             maximum = std::max(maximum, epe);
@@ -46,8 +48,12 @@ int main(int argc, char** argv) {
     SaveTxt::load_txt((directory / "imaging_comparison/optimized_ai.txt").string(), aerial_image);
     const auto evaluation = save_full_chip_ep_epe(aerial_image, directory / "ep_points.csv", config["resist"]["threshold"].as<double>(),
                                                 config["system"]["pixel_size_nm"].as<double>(), output);
-    const int count = evaluation.epe_vector.size();
-    std::cout << std::fixed << std::setprecision(6) << "Full-frame EPE: " << count << " EP, mean="
-              << evaluation.total_epe / count << " nm, max=" << evaluation.epe_vector.maxCoeff() << " nm\n"
+    const int count = evaluation.active_count;
+    double maximum = 0.0;
+    for (int i = 0; i < evaluation.absolute_epe_nm.size(); ++i) {
+        if (std::isfinite(evaluation.absolute_epe_nm(i))) maximum = std::max(maximum, evaluation.absolute_epe_nm(i));
+    }
+    std::cout << std::fixed << std::setprecision(6) << "Full-frame EPE: " << count << " active EP, mean="
+              << evaluation.absolute_sum_nm / count << " nm, max=" << maximum << " nm\n"
               << "Saved to " << output << std::endl;
 }

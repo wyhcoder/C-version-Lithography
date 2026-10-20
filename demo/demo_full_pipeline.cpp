@@ -27,6 +27,7 @@ litho::MEEFPipelineConfig load_meef_config(const YAML::Node& node, const std::fi
     config.pattern_name = node["pattern_name"].as<std::string>();
     config.ls_mask_path = project_path(project_root, node["lsm_mask_path"].as<std::string>()).string();
     config.save_file_path = project_path(project_root, node["output_dir"].as<std::string>()).string();
+    config.epe_mode = node["epe_mode"] ? node["epe_mode"].as<std::string>() : "legacy";
     config.meef_builder = node["meef_builder"].as<std::string>();
     config.meef_matrix_update_mode = node["meef_matrix_update_mode"].as<std::string>();
     config.meef_rebuild_interval = node["meef_rebuild_interval"].as<int>();
@@ -50,8 +51,8 @@ litho::MEEFPipelineConfig load_meef_config(const YAML::Node& node, const std::fi
     config.sraf_curve_type = node["sraf_curve_type"].as<std::string>();
     config.delta = node["delta"].as<double>();
     config.dilate_radius = node["dilate_radius"].as<int>();
-    config.interval_line = node["interval_line"].as<int>();
-    config.interval_corner = node["interval_corner"].as<int>();
+    config.interval_line = node["interval_line"].as<double>();
+    config.interval_corner = node["interval_corner"].as<double>();
     config.mid_weight = node["mid_weight"].as<double>();
     config.other_weight = node["other_weight"].as<double>();
     config.wepe_all_eps = node["wepe_all_eps"].as<bool>();

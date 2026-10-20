@@ -57,7 +57,7 @@ FullChipLSMResult FullChipLSMOptimizer::optimize(const Eigen::MatrixXd& initial_
     const bool show_bg = gradient_options.loss_type == MicroLossType::PEPenalty;
     const char* pe_label = show_bg ? "PE-main(raw)" : gradient_options.loss_type == MicroLossType::PE ? "PE-all(raw)" : "PE-bg(raw)";
     if (options.verbose) {
-        // 配置按损失、边界协调和 EP 统计分组；中文标签按显示宽度对齐，不用 setw() 计算 UTF-8 字节宽度。
+        // 配置按损失、边界协调和 EP 统计分组；中文标签不用 setw()，避免按 UTF-8 字节宽度错位。
         // 用局部字符串统一输出，避免修改调用者 cout 的精度；这里打印的是实际生效的系数。
         std::ostringstream config;
         config << "\n----------------------- LSM 配置 -----------------------\n"
@@ -81,9 +81,9 @@ FullChipLSMResult FullChipLSMOptimizer::optimize(const Eigen::MatrixXd& initial_
         } else if (gradient_options.loss_type == MicroLossType::PE) {
             config << pe_weight << " * PE-all(raw)";
         } else if (gradient_options.loss_type == MicroLossType::EPE) {
-            config << epe_weight << " * EPE(raw)";
+            config << epe_weight << " * EPE-sq(raw)";
         } else {
-            config << pe_weight << " * PE-bg(raw) + " << epe_weight << " * EPE(raw)";
+            config << pe_weight << " * PE-bg(raw) + " << epe_weight << " * EPE-sq(raw)";
         }
         config << "\n  总损失   : data_loss";
         if (gradient_options.enable_cept) config << " + " << gradient_options.cept_weight << " * CEPT_raw";
@@ -107,27 +107,22 @@ FullChipLSMResult FullChipLSMOptimizer::optimize(const Eigen::MatrixXd& initial_
         } else {
             config << "关闭\n";
         }
-        config << "\n  评价选点 : ";
-        if (gradient_options.epe_sampling == MicroEpeSampling::Contact) {
-            config << "contact | select_eps_via(0)，仅四边中点\n";
-        } else if (gradient_options.epe_sampling == MicroEpeSampling::Metal) {
-            config << "metal | select_eps_others(line=" << gradient_options.epe_interval_line
-                   << ", corner=" << gradient_options.epe_interval_corner << ")\n";
-        } else {
-            config << "select_eps_via(2)\n";
-        }
-        config << "  选点权重 : " << (gradient_options.epe_all_eps ? "全部已选 EP 的 EPE 权重为 1" : "沿用原选点函数的 EPE 权重")
+        config << "\n  评价选点 : target 的 0.5 亚像素轮廓 | 弧长采样(line=" << gradient_options.epe_interval_line
+               << ", corner=" << gradient_options.epe_interval_corner << ")\n";
+        config << "  选点权重 : "
+               << (gradient_options.epe_all_eps ? "全部已选 EP 的 EPE 权重为 1" : "沿用原选点函数的 EPE 权重")
                << '\n'
-               << "  测量尺度 : dx = " << gradient_options.epe_pixel_size << "；传入 nm/像素时，EPE 单位为 nm\n"
+               << "  测量尺度 : pixel_size = " << gradient_options.epe_pixel_size
+               << " nm/pixel；平方目标用 pixel²，均值用 nm\n"
                << "\n  日志说明 : 只打印所选类型包含的原始损失；Total-loss 是各项乘配置权重后的总和\n"
-               << "             EPE-mean = EPE 区域原始 EPE 之和 / 实际评价 EP 数，含 Guard 重叠/周期副本\n"
-               << "             EPE 报告绝对值；速度项沿用冻结光强斜率的平方 EPE 近似驱动\n"
+               << "             EPE-mean = 激活 EP 的绝对 EPE(nm)之和 / 激活点数，含 Guard 重叠/周期副本\n"
+               << "             EPE-sq 是加权平方像素距离；冻结梯度幅值并复用原光学反传\n"
                << "             CEPT 单独评价 Guard 与邻居 Core；融合和曲率不计入损失\n"
                << "--------------------------------------------------------\n";
         // 迭代表头与数据列共用固定宽度；ASCII 列名适合 setw() 对齐，不输出 Core 明细或时间步。
         config << "LSM " << std::right << std::setw(7) << "Iter";
         if (show_pe) config << std::setw(15) << pe_label;
-        if (show_epe) config << std::setw(15) << "EPE(raw)";
+        if (show_epe) config << std::setw(15) << "EPE-sq(raw)";
         if (show_bg) config << std::setw(15) << "BG(raw)";
         if (gradient_options.enable_cept) config << std::setw(15) << "CEPT(raw)";
         config << std::setw(15) << "Total-loss";
@@ -159,7 +154,7 @@ FullChipLSMResult FullChipLSMOptimizer::optimize(const Eigen::MatrixXd& initial_
     auto record = [&](int iteration, double min_dt, double max_dt) {
         // 各 Micro 的普通 PE、背景惩罚和 EPE 分别汇总；权重与 evaluator 的损失选择一致。
         double pe = 0.0, penalty = 0.0, epe = 0.0;
-        double total_pe = 0.0, total_bg = 0.0, total_epe = 0.0;
+        double total_pe = 0.0, total_bg = 0.0, total_epe = 0.0, total_epe_abs_nm = 0.0;
         int ep_count = 0;
         CoreLossMetrics core;
         for (const auto& local : evaluation.locals) {
@@ -169,20 +164,22 @@ FullChipLSMResult FullChipLSMOptimizer::optimize(const Eigen::MatrixXd& initial_
             total_pe += local.pe_loss;
             total_bg += local.bg_penalty_raw;
             total_epe += local.epe_loss;
+            total_epe_abs_nm += local.epe_abs_sum_nm;
             ep_count += local.epe_count;
             core.pe_loss += local.core.pe_loss;
             core.bg_penalty_raw += local.core.bg_penalty_raw;
             core.pe_penalty_loss += local.core.pe_penalty_loss;
             core.epe_loss += local.core.epe_loss;
+            core.epe_abs_sum_nm += local.core.epe_abs_sum_nm;
             core.ep_count += local.core.ep_count;
             core.data_loss += local.core.data_loss;
         }
-        core.epe_mean = core.ep_count == 0 ? 0.0 : core.epe_loss / core.ep_count;
+        core.epe_mean = core.ep_count == 0 ? 0.0 : core.epe_abs_sum_nm / core.ep_count;
         const double cept = gradient_options.enable_cept ? gradient_options.cept_weight * evaluation.cept_loss : 0.0;
         // 使用实际 EPE 窗口点集求均值；Core + Guard 的重叠点和周期副本参与评价，不平均各块均值。
-        const double epe_mean = ep_count == 0 ? 0.0 : total_epe / ep_count;
+        const double epe_mean = ep_count == 0 ? 0.0 : total_epe_abs_nm / ep_count;
         state.history.push_back({iteration, evaluation.loss, evaluation.data_loss, evaluation.cept_loss, min_dt, max_dt,
-                                 pe, penalty, epe, cept, core, total_pe, total_bg, total_epe, ep_count, epe_mean});
+                                 pe, penalty, epe, cept, core, total_pe, total_bg, total_epe, total_epe_abs_nm, ep_count, epe_mean});
         if (evaluation.loss < best.best_loss) {
             // 一次保存所有块的同轮状态，确保 CEPT、phi 和 mask 与 best_loss 一致。
             best.best_iteration = iteration;
@@ -240,7 +237,7 @@ FullChipLSMResult FullChipLSMOptimizer::optimize(const Eigen::MatrixXd& initial_
                 next_phi[id].block(window.y0, window.x0, window.rows(), window.cols()) =
                     sdf.block(window.y0, window.x0, window.rows(), window.cols());
             }
-            // 渲染完整局部 phi 的实际成像 mask；梯度继续作为 PDE 法向速度，不对硬阈值 renderer 求 phi 导数。
+            // 渲染完整局部 phi 的成像 mask；梯度作为 PDE 法向速度，不对硬阈值 renderer 求 phi 导数。
             next_masks[id] = render_levelset_mask(next_phi[id], options.mask_type, options.render_scale);
         }
         // OpenMP 隐式等待后统一提交；Core + Guard 之外的 phi 在 RK2、重初始化和交换中都不改写。

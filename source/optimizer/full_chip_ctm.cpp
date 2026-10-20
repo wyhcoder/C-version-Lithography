@@ -49,9 +49,9 @@ FullChipCTMResult FullChipCTMOptimizer::optimize(const Eigen::MatrixXd& initial_
         } else if (gradient_options.loss_type == MicroLossType::PE) {
             std::cout << pe_weight << "*PE-all(raw)";
         } else if (gradient_options.loss_type == MicroLossType::EPE) {
-            std::cout << epe_weight << "*EPE(raw)";
+            std::cout << epe_weight << "*EPE-sq(raw)";
         } else {
-            std::cout << pe_weight << "*PE-bg(raw) + " << epe_weight << "*EPE(raw)";
+            std::cout << pe_weight << "*PE-bg(raw) + " << epe_weight << "*EPE-sq(raw)";
             std::cout << "（主图3×3膨胀" << gradient_options.main_region_dilation_pixels << "次，外部评价PE）";
         }
         std::cout << ", total_loss=data_loss";
@@ -61,15 +61,15 @@ FullChipCTMResult FullChipCTMOptimizer::optimize(const Eigen::MatrixXd& initial_
             std::cout << "  BG_penalty_raw=Σ[target<0.5] max(WI-" << gradient_options.penalty_threshold << ",0)^2\n";
         }
         if (gradient_options.enable_cept) {
-            std::cout << "  CEPT_raw=Σ(本块Guard mask-四邻域Core mask)^2；"
+            std::cout << "1.CEPT_raw=Σ(本块Guard mask-四邻域Core mask)^2；"
                       << "邻居Core作为冻结参考，CEPT只驱动本块Guard。\n";
         }
-        std::cout << "  theta仅更新Core+Guard；窗口外Halo的theta保持本块初值，不从回拼图刷新。\n";
-        std::cout << "  原始损失不乘系数；Total-loss按上述公式加权，梯度融合不计入损失；theta_step="
+        std::cout << "2.theta仅更新Core+Guard；窗口外Halo的theta保持本块初值，不从回拼图刷新。\n";
+        std::cout << "3.原始损失不乘系数；Total-loss按上述公式加权，梯度融合不计入损失；theta_step="
                   << options.learning_rate << '\n';
         std::cout << "CTM " << std::right << std::setw(7) << "Iter";
         if (show_pe) std::cout << std::setw(15) << pe_label;
-        if (show_epe) std::cout << std::setw(15) << "EPE(raw)";
+        if (show_epe) std::cout << std::setw(15) << "EPE-sq(raw)";
         if (show_bg) std::cout << std::setw(15) << "BG(raw)";
         if (gradient_options.enable_cept) std::cout << std::setw(15) << "CEPT(raw)";
         std::cout << std::setw(15) << "Total-loss" << std::endl;
@@ -87,7 +87,8 @@ FullChipCTMResult FullChipCTMOptimizer::optimize(const Eigen::MatrixXd& initial_
     best.best_loss = std::numeric_limits<double>::infinity();
     auto record = [&](int iteration) {
         // 普通 PE 与已加权的背景惩罚分开记录；这些分项只用于展示，不改变总损失或更新梯度。
-        double pe = 0.0, penalty = 0.0, epe = 0.0, pe_raw = 0.0, bg_raw = 0.0, epe_raw = 0.0;
+        double pe = 0.0, penalty = 0.0, epe = 0.0, pe_raw = 0.0, bg_raw = 0.0, epe_raw = 0.0, epe_abs_nm = 0.0;
+        int epe_count = 0;
         for (const auto& local : evaluation.locals) {
             pe += pe_weight * local.pe_loss;
             penalty += local.penalty_loss;
@@ -95,10 +96,12 @@ FullChipCTMResult FullChipCTMOptimizer::optimize(const Eigen::MatrixXd& initial_
             pe_raw += local.pe_loss;
             bg_raw += local.bg_penalty_raw;
             epe_raw += local.epe_loss;
+            epe_abs_nm += local.epe_abs_sum_nm;
+            epe_count += local.epe_count;
         }
         const double cept = gradient_options.enable_cept ? gradient_options.cept_weight * evaluation.cept_loss : 0.0;
         state.history.push_back({iteration, evaluation.loss, evaluation.data_loss, evaluation.cept_loss,
-                                 pe, penalty, epe, cept, pe_raw, bg_raw, epe_raw});
+                                 pe, penalty, epe, cept, pe_raw, bg_raw, epe_raw, epe_abs_nm, epe_count});
         if (evaluation.loss < best.best_loss) {
             // CEPT 依赖邻居关系，必须保存同一轮的所有块及其 Halo/Guard，保证返回状态与最佳 loss 对应。
             best.best_iteration = iteration;

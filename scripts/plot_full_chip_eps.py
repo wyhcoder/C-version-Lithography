@@ -59,7 +59,7 @@ def plot_eps(directory: Path) -> None:
                 ax.text(center_x, center_y, f'Micro {row["micro_id"]}', color="cyan", ha="center", fontsize=7, alpha=0.8)
         if suffix and visible.sum() <= 32:
             for i in np.flatnonzero(visible):
-                ax.annotate(f"({int(y[i])},{int(x[i])})", (x[i], y[i]), xytext=(4, 4),
+                ax.annotate(f"({y[i]:g},{x[i]:g})", (x[i], y[i]), xytext=(4, 4),
                             textcoords="offset points", color="yellow", fontsize=6)
         ax.set_xlim(left - 0.5, right - 0.5)
         ax.set_ylim(bottom - 0.5, top - 0.5)

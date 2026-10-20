@@ -210,34 +210,51 @@ void check_micro_ep_epe() {
         points << "ep_id,y,x,micro_id,weight_epe,weight_meef\n";
         for (int i = 0; i < 6; ++i) {
             const auto& tile = meta.tiles[order[i]];
-            global_eps(i, 0) = tile.core_global.y0;
-            global_eps(i, 1) = tile.core_global.x0;
-            points << 90 - i << ',' << global_eps(i, 0) << ',' << global_eps(i, 1) << ',' << tile.id << ',' << i << ",0.5\n";
+            global_eps(i, 0) = tile.core_global.y0 + 0.25;
+            global_eps(i, 1) = tile.core_global.x0 + 0.5;
+            points << 90 - i << ',' << global_eps(i, 0) << ',' << global_eps(i, 1) << ',' << tile.id << ',' << i + 1 << ",0.5\n";
         }
     }
     const auto evaluation = save_micro_ep_epe(ai, meta, directory / "ep_points.csv", 0.25, 8.0, directory / "ep_epe.csv");
     std::ifstream csv(directory / "ep_epe.csv");
     std::string line;
     std::getline(csv, line);
+    double expected_loss = 0.0, expected_abs_sum_nm = 0.0;
+    EpsResult eps_result{global_eps, Eigen::RowVectorXd(6), Eigen::RowVectorXd::Constant(6, 0.5)};
     for (int i = 0; i < 6; ++i) {
         const auto& tile = meta.tiles[order[i]];
-        const double intensity = ai[tile.id](tile.core_local.y0, tile.core_local.x0);
-        // 当前 EPE 使用 nm 坐标斜率；线性 AI 的解析斜率为 sqrt(0.01²+0.02²)/8，避免放大分母小量。
-        const double expected = std::abs(intensity - 0.25) / (std::sqrt(0.0005) / 8.0 + 1e-12);
-        require(std::abs(evaluation.epe_vector(i) - expected) < 1e-9, "EP slope did not use its full owner Micro AI");
+        const double local_y = tile.core_local.y0 + 0.25, local_x = tile.core_local.x0 + 0.5;
+        const double intensity = 0.1 + 0.01 * local_y + 0.02 * local_x + 0.35 * tile.id;
+        const double gradient = std::sqrt(0.0005);
+        const double signed_epe = (intensity - 0.25) / gradient;
+        const double expected_nm = std::abs(signed_epe) * 8.0;
+        const double point_loss = (i + 1) * signed_epe * signed_epe;
+        eps_result.weight_epe(i) = i + 1;
+        expected_loss += point_loss;
+        expected_abs_sum_nm += expected_nm;
+        require(std::abs(evaluation.signed_epe_pixel(i) - signed_epe) < 1e-9,
+                "EP slope did not use its full owner Micro AI");
         std::getline(csv, line);
         std::replace(line.begin(), line.end(), ',', ' ');
         std::istringstream row(line);
-        int id, y, x, owner;
-        double weight, meef, stored_intensity, epe;
-        row >> id >> y >> x >> owner >> weight >> meef >> stored_intensity >> epe;
-        require(id == 90 - i && owner == order[i] && y == global_eps(i, 0) && x == global_eps(i, 1), "EP order/coordinates changed");
-        require(weight == i && meef == 0.5 && stored_intensity == intensity, "EP intensity/weight export changed");
-        require(std::abs(epe - expected) < 1e-9, "unweighted EP export is wrong");
+        int id, owner;
+        double y, x, weight, meef, stored_intensity, stored_gradient, stored_signed, stored_loss, stored_nm;
+        row >> id >> y >> x >> owner >> weight >> meef >> stored_intensity >> stored_gradient >> stored_signed >> stored_loss >> stored_nm;
+        require(id == 90 - i && owner == order[i] && y == global_eps(i, 0) && x == global_eps(i, 1),
+                "EP order/coordinates changed");
+        require(weight == i + 1 && meef == 0.5 && std::abs(stored_intensity - intensity) < 1e-14 &&
+                std::abs(stored_gradient - gradient) < 1e-14,
+                "EP intensity, gradient or weight export changed");
+        require(std::abs(stored_signed - signed_epe) < 1e-9 && std::abs(stored_loss - point_loss) < 1e-9 &&
+                std::abs(stored_nm - expected_nm) < 1e-9,
+                "subpixel EP export is wrong");
     }
-    const auto stitched = Loss::evaluate_epe(Partition::assemble_global(ai, meta), global_eps, 0.25, 8.0);
-    require((stitched.epe_vector - evaluation.epe_vector).norm() > 1.0, "test did not detect cross-seam spatial differences");
-    require(std::abs(evaluation.total_epe - evaluation.epe_vector.sum()) < 1e-9, "EP total is wrong");
+    const auto stitched = Loss::evaluate_sparse_epe(Partition::assemble_global(ai, meta), eps_result, 0.25, 8.0);
+    require((stitched.absolute_epe_nm - evaluation.absolute_epe_nm).norm() > 1.0,
+            "test did not detect cross-seam spatial differences");
+    require(std::abs(evaluation.weighted_squared_loss - expected_loss) < 1e-9 &&
+            std::abs(evaluation.absolute_sum_nm - expected_abs_sum_nm) < 1e-9 && evaluation.active_count == 6,
+            "EP totals are wrong");
     std::filesystem::remove_all(directory);
 }
 

@@ -297,6 +297,10 @@ int main(int argc, char** argv) {
         meef_config.pattern_name = pattern_name;
         meef_config.ls_mask_path = lsm_path.string();
         meef_config.save_file_path = save_path.string();
+        meef_config.epe_mode = yaml_optional<std::string>(meef_yaml, "epe_mode", "legacy");
+        if (meef_config.epe_mode != "legacy" && meef_config.epe_mode != "subpixel" && meef_config.epe_mode != "pytorch") {
+            throw std::invalid_argument("meef.epe_mode 仅支持 legacy / subpixel / pytorch");
+        }
         meef_config.meef_builder = yaml_optional<std::string>(
             meef_yaml, "meef_builder", "finite_difference");
         meef_config.meef_matrix_update_mode = yaml_optional<std::string>(meef_yaml, "meef_matrix_update_mode", "every_iteration");
@@ -380,19 +384,22 @@ int main(int argc, char** argv) {
         meef_config.delta = yaml_required<double>(meef_yaml, "delta");
         meef_config.dilate_radius = yaml_required<int>(meef_yaml, "dilate_radius");
 
-        meef_config.interval_line = yaml_required<int>(meef_yaml, "interval_line");
-        meef_config.interval_corner = yaml_required<int>(meef_yaml, "interval_corner");
+        meef_config.interval_line = yaml_required<double>(meef_yaml, "interval_line");
+        meef_config.interval_corner = yaml_required<double>(meef_yaml, "interval_corner");
         meef_config.mid_weight = yaml_required<double>(meef_yaml, "mid_weight");
         meef_config.other_weight = yaml_required<double>(meef_yaml, "other_weight");
         meef_config.wepe_all_eps = yaml_optional<bool>(meef_yaml, "wepe_all_eps", false);
         meef_config.optimize_wepe_only = yaml_required<bool>(meef_yaml, "optimize_wepe_only");
 
-        std::cout << "MEEF EP mode: "
-                  << (meef_config.optimize_wepe_only
-                          ? "WEPE-included EP points only"
-                          : "all EP points")
+        const std::string ep_mode_text = meef_config.epe_mode == "pytorch"
+            ? "all edge_sampling.py points"
+            : (meef_config.optimize_wepe_only ? "WEPE-included EP points only" : "all EP points");
+        const std::string weight_text = meef_config.epe_mode == "pytorch" || meef_config.wepe_all_eps
+            ? "all selected EP = 1" : "key EP = 1, other EP = 0";
+        std::cout << "MEEF EP mode: " << ep_mode_text
                   << '\n'
-                  << "WEPE weights: " << (meef_config.wepe_all_eps ? "all selected EP = 1" : "key EP = 1, other EP = 0") << '\n'
+                  << "EP/EPE calculation: " << meef_config.epe_mode << '\n'
+                  << "WEPE weights: " << weight_text << '\n'
                   << "Curve rasterizer: " << meef_config.rasterizer << '\n'
                   << "SRAF curve type: " << meef_config.sraf_curve_type << '\n'
                   << "MEEF builder: " << meef_config.meef_builder << '\n'

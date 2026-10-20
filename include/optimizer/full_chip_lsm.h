@@ -13,7 +13,8 @@ struct FullChipLSMOptions {
     int reinit_interval = 20; // 每完成多少次更新重新计算 SDF；0 表示关闭。
     LevelSetMaskType mask_type = LevelSetMaskType::Binary; // 成像/梯度/CEPT 共用此渲染结果；Gray 使用子像素覆盖率。
     int render_scale = 4; // Gray 模式每方向的放大倍数；4 对应每个原像素内 16 个子像素，输出尺寸不变。
-    MicroGradientOptions gradient_options{.epe_sampling = MicroEpeSampling::Contact, .epe_all_eps = true}; // LSM 的已选 EP 全部等权。
+    // LSM 默认让选出的全部 EP 等权参与 EPE。
+    MicroGradientOptions gradient_options{.epe_sampling = MicroEpeSampling::Contact, .epe_all_eps = true};
     // LSM 固定 Core + Guard 评价、Guard-only CEPT 和 Core 指标统计；仅 PE_EPE 按膨胀主图分区。
     bool parallel_micro = true; // Micro 成像/反传、SDF 初始化和 PDE 更新并行；四邻域交换串行。
     bool verbose = true;
@@ -27,15 +28,16 @@ struct FullChipLSMIteration {
     // data_loss = 普通 PE 贡献 + 背景惩罚贡献 + EPE 贡献；loss = data_loss + CEPT 贡献。
     CoreLossMetrics core; // 所有不重叠 Core 的指标之和；EPE 平均值按全图 EP 总数计算，不平均各块平均值。
     double total_pe_loss, total_bg_penalty_raw; // Core + Guard 的所选 PE 窗口/原背景原始值；PE 窗口由 loss_type 决定。
-    double total_epe_loss; // Core + Guard 的主图 EP 原始 EPE 总和；仅 PE_EPE 用膨胀窗口筛选，未乘 epe_weight。
-    int total_ep_count; // 实际评价的 EP 数，包含 Guard 重叠点和周期副本；唯一 Core 点数另存 core.ep_count。
-    double epe_mean; // total_epe_loss / total_ep_count；不平均各 Micro 均值，单位与 EPE 相同。
+    double total_epe_loss; // Core + Guard 激活 EP 的 Σweight_epe*epe_pixel²，未乘全局 epe_weight。
+    double total_epe_abs_sum_nm; // 同一批激活 EP 的绝对 EPE 总和，单位 nm，仅用于统计。
+    int total_ep_count; // 实际评价的激活 EP 数，包含 Guard 重叠点和周期副本；唯一 Core 点数另存 core.ep_count。
+    double epe_mean; // total_epe_abs_sum_nm / total_ep_count，不平均各 Micro 均值，单位 nm。
 };
 
 struct FullChipLSMResult {
     int best_iteration;
     double best_loss; // 按全部初始/更新后状态中的最小总 loss 选择结果，相等时保留首次达到的状态。
-    Eigen::MatrixXd global_mask; // 最佳轮实际用于评价的 mask（Binary/Gray），仅回拼 Core，尺寸为 meta.height × meta.width。
+    Eigen::MatrixXd global_mask; // 最佳轮评价 mask（Binary/Gray），仅回拼 Core，尺寸为全图高 × 宽。
     Eigen::MatrixXd global_phi; // 同一最佳轮 phi 的 Core 回拼；拼接后的场不保证处处是严格 SDF。
     Eigen::MatrixXd initial_global_phi; // 各块初始化 SDF 的 Core 回拼，便于与最终状态比较。
     Eigen::MatrixXd initial_global_mask; // 第 0 轮实际渲染 mask 的 Core 回拼；Gray 时与输入的 CTM 二值图不同。
@@ -60,7 +62,7 @@ public:
 
 private:
     const PartitionMeta& _meta;
-    MicroGradientExchange _exchange; // 复用 CTM 阶段的逐块成像、原 C++ PE/EPE 梯度、CEPT 和四邻域交换。
+    MicroGradientExchange _exchange; // 复用逐块成像、亚像素 EPE 光学反传、CEPT 和四邻域交换。
 };
 
 } // namespace litho

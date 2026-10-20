@@ -1,10 +1,10 @@
 # 共用图案名；修改一次即可同步 mask 和 MEEF。
-PATTERN_NAME: &PATTERN_NAME "工字型"
+PATTERN_NAME: &PATTERN_NAME "matrix_0001"
 
 # 成像模型
 system:
   wavelength_nm: 193.0
-  pixel_size_nm: 4.0
+  pixel_size_nm: 6.0
   grid_size_pixel: 257       # 实际空间/FFT/mask 边长（像素）；256、257 等奇偶尺寸均自动处理
 
 mask:
@@ -37,10 +37,10 @@ ctm:
 # MEEF 优化：路径均相对于项目根目录。
 meef:
   # 运行与输出
-  output_dir: "result/MEEF_result/test"
+  output_dir: "result/MEEF_result/matrix-0001"
   config_snapshot_name: "config_used.yaml"
   console_log_name: "console_output.log"
-  lsm_mask_path: "result/LSM_result/LSM_mask.txt" # "result/LSM_result/LSM_mask.txt" assets/lsm_mask/0009_matrix_0010.txt
+  lsm_mask_path: "assets/lsm_mask/0000_matrix_0001.txt" # "result/LSM_result/LSM_mask.txt" assets/lsm_mask/0009_matrix_0010.txt
   run_mode: "--optimize"           # --init-only / --build-meef / --optimize
   pattern_name: *PATTERN_NAME
 
@@ -57,9 +57,9 @@ meef:
   patience: 2                     # small_step: 连续满足的轮数；设为 1 即首次满足就退出
 
   # 主图形控制点
-  main_cp_mode: "lsm_interval"     # target_interval / lsm_interval / npy
+  main_cp_mode: "target_interval"     # target_interval / lsm_interval / npy
   main_cps_npy_path: "/Users/wangyuhang/Desktop/school/Litho_Simulation_cpu/OPCproject/DPS/DPS_data/CPS/工字型0.8.npy"
-  main_cp_interval: 7
+  main_cp_interval: 6
   main_symmetry: "none"            # none / center / left-right / diagonal
 
   # 固定 SRAF
@@ -70,18 +70,19 @@ meef:
   sraf_min_aera: 50                # 字段名沿用现有拼写
 
   # 曲线、EPE 与光栅化
+  epe_mode: "pytorch"             # pytorch: 对齐 edge_sampling.py + epe.py；subpixel/legacy 保留原实现
   curve_type: "BS"                 # OA / BZ / BS
   sraf_curve_type: "CR"            # BS / OA / CR；CR 为经过 SRAF 控制点的周期 Catmull-Rom
   msaa_level: 16                   # 4 / 16 / 64
   rasterizer: "msaa"               # msaa / dirac
   delta: 0.15
   dilate_radius: 2
-  interval_line: 5
-  interval_corner: 2
+  interval_line: 4.0               # pytorch 模式的 sample_step_px，沿每条水平/垂直边采样
+  interval_corner: 4.0            # pytorch 模式的 corner_margin_px，从边段两端向内缩进
   mid_weight: 4.0
   other_weight: 4.0
-  wepe_all_eps: true               # true: 全部 EP 的 weight_epe=1；false: 仅关键 EP 为 1
-  optimize_wepe_only: false
+  wepe_all_eps: true               # pytorch 模式输出的所有点都是有效 EP，权重统一为 1。
+  optimize_wepe_only: false        # pytorch 模式使用全部 EP 行构建并求解 MEEF。
 
 # SRAF 宽度优化（demo_SRAF_Optimizer_init）
 # 路径均相对于项目根目录；宽度、间隔和半径的单位均为像素。

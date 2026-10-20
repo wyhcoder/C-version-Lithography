@@ -45,6 +45,17 @@ public:
 
     EpsResult select_eps_via(int r = 1) const;
 
+    // 为全芯片 ILT 提取亚像素 EP。输入间隔单位为像素。
+    // 输出坐标为局部图像零基 (y,x)，可包含半像素位置。
+    // 候选点沿 target>0.5 的 0.5 等值线按弧长采样。
+    // weight_epe=1 表示 active，0 表示仅保留用于可视化的 inactive。
+    EpsResult select_eps_subpixel(double interval_line = 10.0, double interval_corner = 2.0) const;
+
+    // 对齐 edge_sampling.py：扫描 target>=threshold 的水平/垂直边界段，在去除两端 corner_margin_px 后等距采样。
+    // 输出为局部零基 (y,x) 浮点像素坐标；每个输出点都是有效 EP，weight_epe 和 weight_meef 均为 1。
+    EpsResult select_eps_edge_sampling(double sample_step_px = 1.0, double corner_margin_px = 0.5,
+                                       bool include_image_boundary = true, double threshold = 0.5) const;
+
     // ── 辅助工具 ─────────────────────────────────────────────────────────
     static ControlPoints remove_adjacent_close_points(const ControlPoints& contours,
                                                       double threshold = 2.0);

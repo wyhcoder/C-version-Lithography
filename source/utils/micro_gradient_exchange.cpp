@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <opencv2/imgproc.hpp>
+#include "epe_utils.h"
 #include "loss.h"
 
 #ifdef _OPENMP
@@ -26,12 +27,12 @@ EpsResult region_eps_local(const EpsResult& global_eps, const MicroTile& tile, c
             for (int px = -periods; px <= periods; ++px) {
                 const double y = global_eps.eps(i, 0) + py * height, x = global_eps.eps(i, 1) + px * width;
                 if (y >= global_region.y0 && y < global_region.y1 && x >= global_region.x0 && x < global_region.x1) {
-                    // 与原 C++ EPE 取样一致：局部 (y,x) 转为整数像素索引，不修改 EP 的实际坐标。
-                    const int local_y = static_cast<int>(y - tile.tile_global.y0);
-                    const int local_x = static_cast<int>(x - tile.tile_global.x0);
-                    if (epe_window(local_y, local_x) == 0.0) continue;
+                    // EP 坐标保持浮点；任一双线性支撑像素落入 EPE 窗口即视为该点与窗口相交。
+                    const double local_y = y - tile.tile_global.y0, local_x = x - tile.tile_global.x0;
+                    const auto stencil = make_bilinear_stencil(epe_window.rows(), epe_window.cols(), local_y, local_x);
+                    if (!bilinear_touches_window(epe_window, stencil)) continue;
                     selected.push_back(i);
-                    positions.emplace_back(y - tile.tile_global.y0, x - tile.tile_global.x0);
+                    positions.emplace_back(local_y, local_x);
                 }
             }
         }
@@ -98,27 +99,10 @@ MicroLossWeights micro_loss_weights(const MicroGradientOptions& options) {
 }
 
 EpsResult select_micro_epe_points(const Eigen::MatrixXd& global_target, const MicroGradientOptions& options) {
-    const EpSelect selector(global_target, 1.0, 1.0);
-    EpsResult selected;
-    if (options.epe_sampling == MicroEpeSampling::Metal) {
-        selected = selector.select_eps_others(options.epe_interval_line, options.epe_interval_corner);
-    } else if (options.epe_sampling == MicroEpeSampling::Via) {
-        selected = selector.select_eps_via(2);
-    } else {
-        const EpsResult sampled = selector.select_eps_via(0);
-        // r=0 只改变角点偏移，原函数仍返回其他点；先筛选，每个完整矩形 contact 仅留下四边中点。
-        const int count = static_cast<int>((sampled.weight_epe.array() != 0.0).count());
-        selected = {Eigen::MatrixXd(count, 2), Eigen::RowVectorXd(count), Eigen::RowVectorXd(count)};
-        int j = 0;
-        for (int i = 0; i < sampled.eps.rows(); ++i) {
-            if (sampled.weight_epe(i) == 0.0) continue;
-            selected.eps.row(j) = sampled.eps.row(i);
-            selected.weight_epe(j) = sampled.weight_epe(i);
-            selected.weight_meef(j) = sampled.weight_meef(i);
-            ++j;
-        }
-    }
-    // 与 MEEF 的 wepe_all_eps 一致：只统一已选 EP 的 EPE 权重，不改变坐标、数量或 MEEF 权重。
+    (void)options.epe_sampling; // 版图类型不再切换算法，Contact/Metal/Via 均使用同一套 Python 全芯片选点。
+    const EpSelect selector(global_target, 5.0, 1.0);
+    EpsResult selected = selector.select_eps_subpixel(options.epe_interval_line, options.epe_interval_corner);
+    // 只统一候选点权重，不改变亚像素坐标、候选数量或 MEEF 权重。
     if (options.epe_all_eps) selected.weight_epe.setOnes();
     return selected;
 }
@@ -167,7 +151,7 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
     // 在外层 Micro 并行区中，Imaging/Gradient 自动关闭内部光学核并行。
     // _OPENMP 由编译器在启用 OpenMP 时定义；#ifdef 在编译阶段决定是否保留下面的并行代码。
 #ifdef _OPENMP
-    // 线程数不超过已经创建的 Worker 数，也不超过当前 OpenMP 最大线程数，保证每个线程有自己的工作对象。
+    // 线程数不超过 Worker 数和当前 OpenMP 最大线程数，保证每个线程有自己的工作对象。
     const int worker_count = std::min(static_cast<int>(_workers.size()), omp_get_max_threads());
     // 每个线程都进入下面的大括号；parallel_micro=false 时，同一代码块改为只由一个线程执行。
 #pragma omp parallel num_threads(worker_count) if(parallel_micro)
@@ -184,7 +168,7 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
         // * 取得 unique_ptr 指向的 Worker，& 绑定引用，不复制对象；各线程的 FFT 缓冲区和电场互不共用。
         Worker& worker = *_workers[worker_id];
 #ifdef _OPENMP
-        // 将下方 Micro 循环按编号静态分配给线程，每个 id 只计算一次；例如 64 块、4 线程时每线程处理 16 块。
+        // 将 Micro 循环按编号静态分配给线程，每个 id 只计算一次；64 块、4 线程时每线程处理 16 块。
         // 循环末尾有隐式等待，所有线程完成本阶段计算后才能继续；后续邻居交换在并行区外串行执行。
 #pragma omp for schedule(static)
 #endif
@@ -208,6 +192,7 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
                 Loss::background_penalty_loss(region_wafer, region_target, options.penalty_threshold, region_bg_window) : 0.0;
             local.penalty_loss = weights.penalty * local.bg_penalty_raw;
             local.epe_loss = 0.0;
+            local.epe_abs_sum_nm = 0.0;
             local.epe_count = 0;
             local.cept_loss = 0.0;
             local.raw_mask_gradient = Eigen::MatrixXd::Zero(_meta.tile_size, _meta.tile_size);
@@ -223,12 +208,14 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
             if (evaluate_epe) {
                 const EpsResult local_eps = region_eps_local(global_eps, tile, region, _meta.height, _meta.width,
                                                             options.loss_region == MicroLossRegion::CoreGuard, windows.epe);
-                // EPE 统计与实际损失区域一致；权重为 0 时仍统计均值，只在 EPE 启用时执行其梯度反传。
-                local.epe_count = static_cast<int>(local_eps.eps.rows());
-                local.epe_loss = Loss::epe_loss(image.aerial_image, local_eps, _threshold, options.epe_pixel_size);
+                // 平方 EPE 目标和绝对 nm 统计复用同一组激活 EP、双线性 AI 样值与梯度幅值。
+                const auto epe = Loss::evaluate_sparse_epe(image.aerial_image, local_eps, _threshold, options.epe_pixel_size);
+                local.epe_loss = epe.weighted_squared_loss;
+                local.epe_abs_sum_nm = epe.absolute_sum_nm;
+                local.epe_count = epe.active_count;
                 if (weights.epe != 0.0) {
                     local.raw_mask_gradient += weights.epe * worker.gradient.epe_gradient(
-                        image.aerial_image, worker.imaging.get_electric_field(), local_eps, _threshold, options.epe_pixel_size);
+                        image.aerial_image, worker.imaging.get_electric_field(), local_eps, _threshold);
                 }
             }
             local.data_loss = weights.pe * local.pe_loss + local.penalty_loss + weights.epe * local.epe_loss;
@@ -246,10 +233,12 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
                                              options.penalty_weight * local.core.bg_penalty_raw;
                 // Core EP 只筛原图，不加周期副本；在分界线上用半开区间确定唯一所属块。
                 const EpsResult core_eps = region_eps_local(global_eps, tile, core, _meta.height, _meta.width, false, windows.epe);
-                local.core.ep_count = static_cast<int>(core_eps.eps.rows());
-                // 在完整局部 AI 上计算原 EPE 的空间导数，只限制 EP 归属；先裁 Core 会改变边界差分。
-                local.core.epe_loss = Loss::epe_loss(image.aerial_image, core_eps, _threshold, options.epe_pixel_size);
-                local.core.epe_mean = local.core.ep_count == 0 ? 0.0 : local.core.epe_loss / local.core.ep_count;
+                // 在完整局部 AI 上求空间梯度并双线性取样；只限制 EP 归属，不能先裁 Core。
+                const auto core_epe = Loss::evaluate_sparse_epe(image.aerial_image, core_eps, _threshold, options.epe_pixel_size);
+                local.core.epe_loss = core_epe.weighted_squared_loss;
+                local.core.epe_abs_sum_nm = core_epe.absolute_sum_nm;
+                local.core.ep_count = core_epe.active_count;
+                local.core.epe_mean = local.core.ep_count == 0 ? 0.0 : local.core.epe_abs_sum_nm / local.core.ep_count;
                 local.core.data_loss = weights.pe * local.core.pe_loss + weights.penalty * local.core.bg_penalty_raw +
                                        weights.epe * local.core.epe_loss;
             }
@@ -259,12 +248,13 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
         }
     }
 
-    // 也就是先进行了每个 micro 的成像和反传，得到了每个 micro 的 loss 和 mask_gradient，接下来进行邻居交换和 CEPT 约束。
-    // 阶段二：上面的并行区结束后所有 Micro 已完成；现在串行读取邻居原始结果，进行交换、CEPT 和融合。
+    // 每个 Micro 已完成成像和反传，得到 loss 与 mask_gradient；接下来串行交换邻居信息并计算 CEPT。
+    // 阶段二：并行区结束后，串行读取邻居原始结果，进行交换、CEPT 和融合。
     for (int id = 0; id < tile_count; ++id) {
         const MicroTile& tile = _meta.tiles[id]; // 当前块 A 的分区信息，id 是 A 的 Micro 编号。
         MicroGradientData& local = result.locals[id]; // A 的计算结果：loss、完整局部梯度及收到的邻居数据。
-        for (int j = 0; j < static_cast<int>(tile.neighbors.size()); ++j) { // 遍历本块的四邻域，j 是邻居在 tile.neighbors 中的索引，neighbor.id 是邻居的 Micro id。
+        // j 是邻居在 tile.neighbors 中的索引，neighbor.id 是邻居 Micro id。
+        for (int j = 0; j < static_cast<int>(tile.neighbors.size()); ++j) {
             const MicroNeighbor& neighbor = tile.neighbors[j]; // A 与邻居 B 的重叠关系；neighbor.id 是 B 的 Micro 编号。
             // B 的完整局部数据项梯度，尺寸为 tile_size × tile_size，含 Core 和 Halo；尚未融合或加入 CEPT。
             const Eigen::MatrixXd& neighbor_gradient = result.locals[neighbor.id].raw_mask_gradient;
@@ -283,7 +273,7 @@ MicroGradientExchangeResult MicroGradientExchange::compute(const std::vector<Eig
             received.guard_gradient = neighbor_gradient.block(guard_source.y0, guard_source.x0, guard_source.rows(), guard_source.cols());
             // overlap_source：B 局部矩阵中的取数坐标，取出 B Guard 中与 A Core 边缘重叠的部分。
             const PartitionRect& overlap_source = neighbor.neighbor_guard_local;
-            // overlap_gradient：取出的 B Guard 梯度值，对应 A 的 Core 边缘；这里先保存，当前融合分支仅用 guard_gradient。
+            // overlap_gradient 是 B Guard 梯度，对应 A 的 Core 边缘；当前融合分支只使用 guard_gradient。
             received.overlap_gradient = neighbor_gradient.block(overlap_source.y0, overlap_source.x0,
                                                                 overlap_source.rows(), overlap_source.cols());
             const PartitionRect& guard = neighbor.my_guard_local; // A 局部坐标：A Guard 与 B Core 重叠的区域。

@@ -89,33 +89,41 @@ void check_consistency(const PartitionMeta& meta, const ImagingCache& cache, con
     gradient_options.collect_core_metrics = true;
     const auto reevaluated = exchange.compute(result.local_masks, target, gradient_options, false);
     require(std::abs(reevaluated.loss - result.best_loss) < 1e-9, "returned best state does not reproduce best loss");
-    double core_pe = 0.0, core_epe = 0.0, core_data = 0.0;
+    double core_pe = 0.0, core_epe = 0.0, core_epe_abs_nm = 0.0, core_data = 0.0;
     int ep_count = 0;
-    double total_pe = 0.0, total_bg = 0.0, total_epe = 0.0;
+    double total_pe = 0.0, total_bg = 0.0, total_epe = 0.0, total_epe_abs_nm = 0.0;
     int total_ep_count = 0;
     for (const auto& tile : meta.tiles) {
         const auto& local = reevaluated.locals[tile.id];
         const auto& m = local.core;
         const auto& saved = result.best_core_metrics[tile.id];
-        require(saved.pe_loss == m.pe_loss && saved.epe_loss == m.epe_loss && saved.data_loss == m.data_loss,
+        require(saved.pe_loss == m.pe_loss && saved.epe_loss == m.epe_loss && saved.epe_abs_sum_nm == m.epe_abs_sum_nm &&
+                saved.data_loss == m.data_loss,
                 "saved Core metrics do not belong to the best state");
         core_pe += m.pe_loss;
         core_epe += m.epe_loss;
+        core_epe_abs_nm += m.epe_abs_sum_nm;
         core_data += m.data_loss;
         ep_count += m.ep_count;
         total_pe += local.pe_loss;
         total_bg += local.bg_penalty_raw;
         total_epe += local.epe_loss;
+        total_epe_abs_nm += local.epe_abs_sum_nm;
         total_ep_count += local.epe_count;
     }
-    require(best->core.pe_loss == core_pe && best->core.epe_loss == core_epe && best->core.ep_count == ep_count,
+    require(best->core.pe_loss == core_pe && best->core.epe_loss == core_epe && best->core.epe_abs_sum_nm == core_epe_abs_nm &&
+            best->core.ep_count == ep_count,
             "Core history does not match best-state metrics");
     require(best->core.data_loss == core_data, "wrong Core weighted objective");
-    require(best->core.epe_mean == (ep_count == 0 ? 0.0 : core_epe / ep_count), "Core EPE mean must use global point count");
+    require(best->core.epe_mean == (ep_count == 0 ? 0.0 : core_epe_abs_nm / ep_count),
+            "Core EPE mean must use absolute-nm sum and global active-point count");
     // 总量使用实际 Core + Guard 分区窗口；Core 诊断则不重复评价 Guard 的点和像素。
     require(best->total_pe_loss == total_pe && best->total_bg_penalty_raw == total_bg, "total pixel metrics mismatch");
-    require(best->total_epe_loss == total_epe && best->total_ep_count == total_ep_count, "total EPE metrics mismatch");
-    require(best->epe_mean == (total_ep_count == 0 ? 0.0 : total_epe / total_ep_count), "total EPE mean uses the wrong point count");
+    require(best->total_epe_loss == total_epe && best->total_epe_abs_sum_nm == total_epe_abs_nm &&
+            best->total_ep_count == total_ep_count,
+            "total EPE metrics mismatch");
+    require(best->epe_mean == (total_ep_count == 0 ? 0.0 : total_epe_abs_nm / total_ep_count),
+            "total EPE mean must use absolute-nm sum and the active-point count");
     const auto weights = micro_loss_weights(gradient_options);
     for (const auto& row : result.history) {
         require(std::abs(row.data_loss - row.pe_contribution - row.penalty_contribution - row.epe_contribution) < 1e-9,
@@ -277,7 +285,7 @@ void check_loss_log() {
         require((header.find("PE-all(raw)") != std::string::npos) == (type == MicroLossType::PE), "wrong full PE log column");
         require((header.find("PE-main(raw)") != std::string::npos) == bg, "wrong main PE log column");
         require((header.find("PE-bg(raw)") != std::string::npos) == (type == MicroLossType::PE_EPE), "wrong background PE log column");
-        require((header.find("EPE(raw)") != std::string::npos) == epe, "inactive EPE leaked into log");
+        require((header.find("EPE-sq(raw)") != std::string::npos) == epe, "inactive EPE leaked into log");
         require((header.find("BG(raw)") != std::string::npos) == bg, "inactive penalty leaked into log");
         require(header.find("CEPT(raw)") == std::string::npos, "disabled CEPT leaked into log");
         std::istringstream cells(data);

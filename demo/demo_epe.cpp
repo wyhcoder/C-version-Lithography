@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
 
     // ── 2. EPE gradient ──────────────────────────────────────────────
     Eigen::MatrixXd Gm = gradient.epe_gradient(
-        aerial, imaging.get_electric_field(), eps_result, threshold, dx);
+        aerial, imaging.get_electric_field(), eps_result, threshold);
     SaveTxt::save_mat(Gm, "epe_gradient.txt");
     std::cout << "EPE gradient: min=" << Gm.minCoeff()
               << " max=" << Gm.maxCoeff()

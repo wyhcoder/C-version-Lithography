@@ -17,6 +17,8 @@ namespace litho {
         std::string pattern_name;
         std::string ls_mask_path;
         std::string save_file_path;
+        // EP/EPE 计算方式：legacy 为原整数方法；subpixel 为旧候选/WEP 方法；pytorch 对齐 edge_sampling.py 和 epe.py。
+        std::string epe_mode = "legacy";
         // MEEF 构建方式：finite_difference / analytic。
         std::string meef_builder = "finite_difference";
         // MEEF 矩阵更新方式：every_iteration / periodic / initial_only。
@@ -57,10 +59,9 @@ namespace litho {
         double delta = 0.15;
         // 膨胀半径
         int dilate_radius = 2;
-        // 线段间隔
-        int interval_line = 5;
-        // 角度间隔
-        int interval_corner = 2;
+        // pytorch 模式下分别对应 sample_step_px 和 corner_margin_px；其他模式沿用原采样含义，单位均为 pixel。
+        double interval_line = 5.0;
+        double interval_corner = 2.0;
         // 中间点权重
         double mid_weight = 4.0;
         // 其他点权重
@@ -68,9 +69,18 @@ namespace litho {
         // true：所有已选 EP 的 weight_epe 均为 1，WEPE 与 EPE 使用相同的点集。
         bool wepe_all_eps = false;
         // true：MEEF 每一行再乘 weight_epe，只优化计入 WEPE 的 EP 点。
-        // false：仅使用 weight_meef，所有 EP 点参与优化。
+        // false：legacy 模式仅使用 weight_meef；subpixel 模式始终只在 WEP 位置计算 EPE 和矩阵行。
         bool optimize_wepe_only = false;
     };
+
+    // 按配置选择 MEEF 的 EP 点集；返回坐标单位为 pixel，坐标顺序为局部零基 (y,x)。
+    EpsResult select_meef_evaluation_points(const Eigen::MatrixXd& target_mask, const MEEFPipelineConfig& config);
+
+    // 计算 MEEF 线性系统使用的逐点绝对 EPE，单位 nm。
+    // legacy/subpixel 返回原绝对 EPE；pytorch 返回 epe.py 的有符号 delta_nm，供 MEEF 线性系统使用。
+    Eigen::RowVectorXd evaluate_meef_epe_vector(const Eigen::MatrixXd& aerial_image, const EpsResult& eps_result,
+                                                double threshold, double pixel_size_nm, const std::string& epe_mode);
+
     struct Main_SRAF{
         Eigen::MatrixXd main_mask;
         Eigen::MatrixXd sraf_mask;

@@ -157,7 +157,9 @@ add_library(litho_core STATIC
     source/litho_model/mirco_imaging.cpp
 
     # 通用算法与数据处理工具
+    source/utils/console_log.cpp
     source/utils/ep_select.cpp
+    source/utils/epe_utils.cpp
     source/utils/msaa.cpp
     source/utils/parametric.cpp
     source/utils/meef_pipeline.cpp
@@ -342,6 +344,10 @@ if(BUILD_TESTING)
     add_executable(test_micro_gradient_exchange tests/test_micro_gradient_exchange.cpp)
     target_link_libraries(test_micro_gradient_exchange litho_core)
     add_test(NAME micro_gradient_exchange COMMAND test_micro_gradient_exchange)
+
+    add_executable(test_meef_epe_mode tests/test_meef_epe_mode.cpp)
+    target_link_libraries(test_meef_epe_mode litho_core)
+    add_test(NAME meef_epe_mode COMMAND test_meef_epe_mode)
 
     add_executable(test_full_chip_ctm tests/test_full_chip_ctm.cpp)
     target_link_libraries(test_full_chip_ctm litho_core)

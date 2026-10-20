@@ -1,8 +1,10 @@
 #include "loss.h"
+#include "epe_utils.h"
 #include "level_set_utils.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace litho {
@@ -118,6 +120,77 @@ namespace litho {
     {
         return evaluate_epe(
             aerial_image, eps_result.eps, threshold, dx).total_epe;
+    }
+
+    SparseEpeEvaluation Loss::evaluate_sparse_epe(const Eigen::MatrixXd& aerial_image, const EpsResult& eps_result,
+                                                   double threshold, double pixel_size_nm) {
+        const int count = static_cast<int>(eps_result.eps.rows());
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        SparseEpeEvaluation result;
+        result.signed_epe_pixel = Eigen::RowVectorXd::Constant(count, nan);
+        result.absolute_epe_nm = Eigen::RowVectorXd::Constant(count, nan);
+        result.aerial_samples = Eigen::RowVectorXd::Constant(count, nan);
+        result.gradient_samples = Eigen::RowVectorXd::Constant(count, nan);
+        result.point_losses = Eigen::RowVectorXd::Zero(count);
+
+        // 复用项目已有的一维空间差分，先逐像素求 |∇AI|，再分别插值 AI 和梯度幅值。
+        const Eigen::MatrixXd gradient_x = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 1);
+        const Eigen::MatrixXd gradient_y = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 0);
+        Eigen::MatrixXd gradient_magnitude = (gradient_x.array().square() + gradient_y.array().square()).sqrt().matrix();
+        gradient_magnitude = gradient_magnitude.array().max(1e-6).matrix();
+
+        for (int i = 0; i < count; ++i) {
+            const double weight = eps_result.weight_epe(i);
+            if (weight <= 0.0) continue;
+            const auto stencil = make_bilinear_stencil(
+                aerial_image.rows(), aerial_image.cols(), eps_result.eps(i, 0), eps_result.eps(i, 1));
+            const double aerial = bilinear_sample(aerial_image, stencil);
+            const double magnitude = std::max(bilinear_sample(gradient_magnitude, stencil), 1e-6);
+            const double signed_epe = (aerial - threshold) / magnitude;
+            // magnitude 按 d=1 pixel 求得，signed_epe 的单位是 pixel；这里只在绝对 EPE 统计中换算一次 nm。
+            const double absolute_nm = std::abs(signed_epe) * pixel_size_nm;
+            const double point_loss = weight * signed_epe * signed_epe;
+            result.signed_epe_pixel(i) = signed_epe;
+            result.absolute_epe_nm(i) = absolute_nm;
+            result.aerial_samples(i) = aerial;
+            result.gradient_samples(i) = magnitude;
+            result.point_losses(i) = point_loss;
+            result.weighted_squared_loss += point_loss;
+            result.absolute_sum_nm += absolute_nm;
+            ++result.active_count;
+        }
+        return result;
+    }
+
+    PytorchEpeEvaluation Loss::evaluate_pytorch_epe(const Eigen::MatrixXd& aerial_image, const Eigen::MatrixXd& eps,
+                                                     double threshold, double pixel_size_nm, double epsilon) {
+        const int count = static_cast<int>(eps.rows());
+        PytorchEpeEvaluation result;
+        result.signed_epe_nm.resize(count);
+        result.absolute_epe_nm.resize(count);
+        result.aerial_samples.resize(count);
+        result.gradient_samples.resize(count);
+        result.denominators.resize(count);
+        result.point_losses_nm2.resize(count);
+
+        const SobelGradientMaps gradient = sobel_gradient_maps(aerial_image);
+        for (int i = 0; i < count; ++i) {
+            // edge_sampling.py 输出 (x,y)，EpsResult 统一保存为 (y,x)，这里直接按矩阵行列构造双线性模板。
+            const BilinearStencil stencil = make_bilinear_stencil(aerial_image.rows(), aerial_image.cols(), eps(i, 0), eps(i, 1));
+            const double aerial = bilinear_sample(aerial_image, stencil);
+            const double magnitude = bilinear_sample(gradient.magnitude, stencil);
+            const double denominator = magnitude + epsilon;
+            const double signed_nm = (aerial - threshold) / denominator * pixel_size_nm;
+            const double point_loss_nm2 = signed_nm * signed_nm;
+            result.signed_epe_nm(i) = signed_nm;
+            result.absolute_epe_nm(i) = std::abs(signed_nm);
+            result.aerial_samples(i) = aerial;
+            result.gradient_samples(i) = magnitude;
+            result.denominators(i) = denominator;
+            result.point_losses_nm2(i) = point_loss_nm2;
+            result.squared_loss_nm2 += point_loss_nm2;
+        }
+        return result;
     }
 
 

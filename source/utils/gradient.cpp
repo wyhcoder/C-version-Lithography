@@ -1,4 +1,5 @@
 #include "gradient.h"
+#include "epe_utils.h"
 #include "fft.h"
 #include <fftw3.h>
 #include "level_set_utils.h"
@@ -139,25 +140,6 @@ Eigen::MatrixXd Gradient::pe_gradient(const Eigen::MatrixXd& wafer_image, const 
     return _backpropagate(dLdI, electric_field, 4.0 * _alpha);
 }
 
-Eigen::MatrixXd Gradient::epe_gradient(
-    const Eigen::MatrixXd& aerial_image,
-    EpsResult eps_result,
-    double threshold,
-    double dx,
-    const std::vector<Eigen::MatrixXcd>& electric_field)
-{
-    // 保留旧接口的原有等效公式；该接口未使用 eps_result 和 dx。
-    (void)eps_result;
-    (void)dx;
-    Eigen::MatrixXd dLdI =
-        (2.0 * (aerial_image.array() - threshold)).matrix();
-    return _backpropagate(dLdI, electric_field, 1.0);
-}
-
-
-
-
-
 Eigen::MatrixXd Gradient::pe_gradient_with_penalty(
     const Eigen::MatrixXd& wafer_image,
     const Eigen::MatrixXd& target_image,
@@ -217,38 +199,30 @@ Eigen::MatrixXd Gradient::epe_gradient(
     const Eigen::MatrixXd& aerial_image,
     const std::vector<Eigen::MatrixXcd>& electric_field,
     const EpsResult& eps_result,
-    double threshold,
-    double dx)
+    double threshold)
 {
     const int N = _cache.N;
 
-    // 差分步长为 1 像素，G 表示每像素的光强斜率；绝对 EPE=|I-τ|*dx/G。
-    // 按平方 EPE 构造驱动，本次反传冻结 G，不包含光强斜率随 mask 变化的导数。
-    Eigen::MatrixXd aerial_dx = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 1);
-    Eigen::MatrixXd aerial_dy = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 0);
-    Eigen::MatrixXd G_magnitude =
-        (aerial_dx.array().square() + aerial_dy.array().square()).sqrt();
+    // 复用项目已有的一维空间差分，先求每个像素的梯度幅值，再在 EP 处双线性插值。
+    const Eigen::MatrixXd aerial_dx = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 1);
+    const Eigen::MatrixXd aerial_dy = LevelSetUtils::_gradient_1d(aerial_image, 1.0, 0);
+    Eigen::MatrixXd gradient_magnitude = (aerial_dx.array().square() + aerial_dy.array().square()).sqrt().matrix();
+    gradient_magnitude = gradient_magnitude.array().max(1e-6).matrix();
 
-    // L_sq=Σ weight_epe*(I-τ)²*dx²/G²，故 dL_sq/dI=2*weight_epe*(I-τ)*dx²/G²。
-    // 这是优化驱动的近似目标；Loss::epe_loss() 仍报告绝对 EPE，二者有意使用不同形式。
-    // EP 使用当前 N×N 局部图像的像素索引 (y,x)；误差信号仅在 EP 非零，反传结果覆盖完整 mask。
+    // L=Σw*[(I_ep-τ)/G_ep]²；冻结 G_ep 后，dL/dI_ep=2w*(I_ep-τ)/G_ep²。
     Eigen::MatrixXd dLdI = Eigen::MatrixXd::Zero(N, N);
-    const double dx2 = dx * dx; // dx 为物理长度/像素；传入 nm/像素时，平方 EPE 及其 mask 梯度含 nm² 尺度。
-
     const auto& eps = eps_result.eps;
-    const auto& w   = eps_result.weight_epe;
-    int M = (int)eps.rows();
-    for (int i = 0; i < M; ++i) {
-        int y = (int)eps(i, 0);
-        int x = (int)eps(i, 1);
-        double diff = aerial_image(y, x) - threshold;
-        double G = G_magnitude(y, x);
-        if (G < 1e-12) G = 1e-12;   // 防止除零
-        double G2 = G * G;
-        dLdI(y, x) += w(i) * 2.0 * diff * dx2 / G2;
+    const auto& weights = eps_result.weight_epe;
+    for (int i = 0; i < eps.rows(); ++i) {
+        if (weights(i) <= 0.0) continue;
+        const auto stencil = make_bilinear_stencil(N, N, eps(i, 0), eps(i, 1));
+        const double aerial = bilinear_sample(aerial_image, stencil);
+        const double magnitude = std::max(bilinear_sample(gradient_magnitude, stencil), 1e-6);
+        const double sample_gradient = 2.0 * weights(i) * (aerial - threshold) / (magnitude * magnitude);
+        bilinear_scatter(dLdI, stencil, sample_gradient);
     }
 
-    // dLdI 已包含平方误差求导的 2；I=|E|² 对实值 mask 求导还产生一个 2，不含 sigmoid 的 alpha。
+    // dLdI 已包含平方 EPE 的 2；I=|E|² 对实值 mask 求导再产生一个 2。
     return _backpropagate(dLdI, electric_field, 2.0);
 }
 

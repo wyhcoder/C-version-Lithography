@@ -1,5 +1,6 @@
 #include "MEEF_Optimizer.h"
 #include "ep_select.h"
+#include "epe_utils.h"
 #include "imaging.h"
 #include "loss.h"
 #include "level_set_utils.h"
@@ -111,6 +112,30 @@ namespace litho {
                << "p95_nm " << stats.p95 << '\n'
                << "max_nm " << stats.maximum << '\n';
         return stats;
+    }
+
+    // 保存最佳结果的晶圆像预览，并用红线叠加 target>=0.5 的目标轮廓。
+    // wafer_image 与 target_mask 均使用局部零基像素索引 (y,x)，输出 PNG 与输入矩阵尺寸一致。
+    void save_wafer_with_target_contour(const std::filesystem::path& path, const Eigen::MatrixXd& wafer_image,
+                                        const Eigen::MatrixXd& target_mask) {
+        cv::Mat wafer_gray(wafer_image.rows(), wafer_image.cols(), CV_8UC1);
+        cv::Mat target_binary(target_mask.rows(), target_mask.cols(), CV_8UC1);
+        for (int y = 0; y < wafer_image.rows(); ++y) {
+            for (int x = 0; x < wafer_image.cols(); ++x) {
+                wafer_gray.at<unsigned char>(y, x) = static_cast<unsigned char>(
+                    std::lround(255.0 * std::clamp(wafer_image(y, x), 0.0, 1.0)));
+                target_binary.at<unsigned char>(y, x) = target_mask(y, x) >= 0.5 ? 255 : 0;
+            }
+        }
+
+        std::vector<std::vector<cv::Point>> target_contours;
+        cv::findContours(target_binary, target_contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
+        cv::Mat overlay;
+        cv::cvtColor(wafer_gray, overlay, cv::COLOR_GRAY2BGR);
+        cv::drawContours(overlay, target_contours, -1, cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+        if (!cv::imwrite(path.string(), overlay)) {
+            throw std::runtime_error("MEEF_Optimizer: cannot write wafer contour overlay " + path.string());
+        }
     }
 
     void save_epe_histogram(const std::filesystem::path& path,
@@ -245,6 +270,54 @@ namespace litho {
 
     }  // namespace
 
+    EpsResult select_meef_evaluation_points(const Eigen::MatrixXd& target_mask, const MEEFPipelineConfig& config) {
+        EpSelect selector(target_mask, config.mid_weight, config.other_weight);
+        EpsResult result;
+        if (config.epe_mode == "legacy") {
+            result = selector.select_eps_others(static_cast<int>(config.interval_line), static_cast<int>(config.interval_corner));
+        }
+        else if (config.epe_mode == "subpixel") result = selector.select_eps_subpixel(config.interval_line, config.interval_corner);
+        else if (config.epe_mode == "pytorch") result = selector.select_eps_edge_sampling(config.interval_line, config.interval_corner);
+        else throw std::invalid_argument("MEEF_Optimizer: unsupported epe_mode: " + config.epe_mode);
+        if (config.wepe_all_eps) result.weight_epe.setOnes();
+        return result;
+    }
+
+    Eigen::RowVectorXd evaluate_meef_epe_vector(const Eigen::MatrixXd& aerial_image, const EpsResult& eps_result,
+                                                double threshold, double pixel_size_nm, const std::string& epe_mode) {
+        if (epe_mode == "legacy") return Loss::evaluate_epe(aerial_image, eps_result.eps, threshold, pixel_size_nm).epe_vector;
+        if (epe_mode == "subpixel") {
+            // 只在 weight_epe>0 的 WEP 处计算亚像素 EPE。evaluate_sparse_epe 用 NaN 标记 inactive 候选点，
+            // 这里将这些位置写成 0，使向量仍与全部候选 EP/MEEF 矩阵行一一对应，
+            // 同时避免 NaN 进入矩阵差分和 SVD。
+            Eigen::RowVectorXd epe = Loss::evaluate_sparse_epe(aerial_image, eps_result, threshold, pixel_size_nm).absolute_epe_nm;
+            for (int ep = 0; ep < epe.size(); ++ep) {
+                if (eps_result.weight_epe(ep) <= 0.0) epe(ep) = 0.0;
+            }
+            return epe;
+        }
+        if (epe_mode == "pytorch") {
+            return Loss::evaluate_pytorch_epe(aerial_image, eps_result.eps, threshold, pixel_size_nm).absolute_epe_nm;
+        }
+        throw std::invalid_argument("MEEF_Optimizer: unsupported epe_mode: " + epe_mode);
+    }
+
+    // 评价用 EPE：在全部候选 EP 上计算逐点误差。它用于 mean_EPE、最大 EPE 和直方图，
+    // 与 evaluate_meef_epe_vector 返回的 WEP-only 求解向量分开。
+    static Eigen::RowVectorXd evaluate_all_epe_vector(const Eigen::MatrixXd& aerial_image, const EpsResult& eps_result,
+                                                      double threshold, double pixel_size_nm, const std::string& epe_mode) {
+        if (epe_mode == "legacy") return Loss::evaluate_epe(aerial_image, eps_result.eps, threshold, pixel_size_nm).epe_vector;
+        if (epe_mode == "subpixel") {
+            EpsResult all_eps = eps_result;
+            all_eps.weight_epe.setOnes();
+            return Loss::evaluate_sparse_epe(aerial_image, all_eps, threshold, pixel_size_nm).absolute_epe_nm;
+        }
+        if (epe_mode == "pytorch") {
+            return Loss::evaluate_pytorch_epe(aerial_image, eps_result.eps, threshold, pixel_size_nm).absolute_epe_nm;
+        }
+        throw std::invalid_argument("MEEF_Optimizer: unsupported epe_mode: " + epe_mode);
+    }
+
     // 功能：构造并初始化 MEEF 优化器。加载目标/LSM/SRAF，生成或导入控制点，
     //       选择 EP 点，渲染参数化初始掩模，并把初始化元数据保存到输出目录。
     MEEF_Optimizer::MEEF_Optimizer(const LithographySimulator& simulator,const ImagingCache& cache, const MEEFPipelineConfig& config):
@@ -281,9 +354,7 @@ namespace litho {
                 _config.sraf_mask_mode);
         }
 
-        EpSelect ep_select(_target_mask, _config.mid_weight, _config.other_weight);
-        _eps_result = ep_select.select_eps_others(_config.interval_line, _config.interval_corner);
-        if (_config.wepe_all_eps) _eps_result.weight_epe.setOnes();
+        _eps_result = select_meef_evaluation_points(_target_mask, _config);
         if (_config.main_cp_mode == "target_interval") {
             _main_control_points = _extract_mask_control_points(
                 _target_mask, config.main_cp_interval, config.main_symmetry);
@@ -684,13 +755,14 @@ namespace litho {
         // 2. SRAF CP
         write_cps("sraf_cps.txt", "sraf block", _sraf_control_points);
 
-        // 3. EP 点（整数，等价 np.savetxt(fmt="%d")）
+        // 3. EP 点：legacy 保留原整数格式；subpixel 保留局部零基 (y,x) 的浮点像素坐标。
         {
             std::ofstream f(out / "eps.txt");
             const Eigen::MatrixXd& eps = _eps_result.eps;
             for (int r = 0; r < eps.rows(); ++r) {
                 for (int c = 0; c < eps.cols(); ++c) {
-                    f << static_cast<int>(std::round(eps(r, c)));
+                    if (_config.epe_mode == "legacy") f << static_cast<int>(std::round(eps(r, c)));
+                    else f << std::setprecision(12) << eps(r, c);
                     if (c < eps.cols() - 1) f << " ";
                 }
                 f << "\n";
@@ -864,7 +936,7 @@ namespace litho {
     }
 
     // 功能：分别保存“加权 EPE 最小”和“普通 EPE 最小”时的控制点、mask、
-    //       空中像、晶圆像及指标，形成 best_wepe 和 best_epe 两组快照。
+    //       空中像、晶圆像、叠加目标轮廓的晶圆像预览及指标，形成 best_wepe 和 best_epe 两组快照。
     void MEEF_Optimizer::_save_best_results() const
     {
         namespace fs = std::filesystem;
@@ -915,43 +987,47 @@ namespace litho {
                             double wepe,
                             const ControlPoints& cps,
                             const Eigen::MatrixXd& mask,
-                            const Imaging_Result& imaging) {
-            if (iteration < 0) return;
+                            const Imaging_Result& imaging) -> EpeStatistics {
+            if (iteration < 0) return {};
             fs::path dir = out / dirname;
             fs::create_directories(dir);
             write_matrix(dir / "mask.txt", mask);
             write_matrix(dir / "aerial.txt", imaging.aerial_image);
             write_matrix(dir / "wafer.txt", imaging.wafer_image);
+            save_wafer_with_target_contour(dir / "wafer_with_target_contour.png", imaging.wafer_image, _target_mask);
             write_cps(dir / "control_points.txt", cps);
-            const EpeEvaluation epe_details = Loss::evaluate_epe(
-                imaging.aerial_image,
-                _eps_result.eps,
-                _simulator._params.resist.threshold,
-                _simulator._params.system.pixel_size_nm);
-            save_epe_vector(dir / "epe_vector.txt", epe_details.epe_vector);
-            const EpeStatistics stats = save_epe_statistics(
-                dir / "epe_statistics.txt", epe_details.epe_vector);
+            const Eigen::RowVectorXd epe_vector = evaluate_all_epe_vector(
+                imaging.aerial_image, _eps_result, _simulator._params.resist.threshold,
+                _simulator._params.system.pixel_size_nm, _config.epe_mode);
+            save_epe_vector(dir / "epe_vector.txt", epe_vector);
+            // epe_vector 与 eps.txt 逐行对应，包含全部候选 EP；最佳结果的 EPE 统计也采用同一组点。
+            const EpeStatistics stats = save_epe_statistics(dir / "epe_statistics.txt", epe_vector);
             save_epe_histogram(
                 dir / "epe_histogram.png",
-                epe_details.epe_vector,
+                epe_vector,
                 _config.epe_histogram_bin_width_nm);
             std::ofstream f(dir / "metrics.txt");
             f << std::setprecision(12)
               << "iteration " << iteration << '\n'
               << "epe_total " << epe << '\n'
               << "epe_mean " << epe / std::max(1, _num_eps) << '\n'
+              << "epe_max_nm " << stats.maximum << '\n'
               << "epe_le_1nm_count " << stats.le_1nm_count << '\n'
               << "epe_le_1nm_ratio " << stats.le_1nm_ratio << '\n'
               << "wepe_total " << wepe << '\n'
               << "wepe_mean " << wepe / std::max(1, _num_weps) << '\n';
+            return stats;
         };
 
-        save_one("best_wepe", _best_wepe_iteration,
-                 _best_wepe_epe, _best_wepe,
-                 _best_wepe_cps, _best_wepe_mask, _best_wepe_imaging);
-        save_one("best_epe", _best_epe_iteration,
-                 _best_epe, _best_epe_wepe,
-                 _best_epe_cps, _best_epe_mask, _best_epe_imaging);
+        const EpeStatistics best_wepe_stats = save_one(
+            "best_wepe", _best_wepe_iteration, _best_wepe_epe, _best_wepe,
+            _best_wepe_cps, _best_wepe_mask, _best_wepe_imaging);
+        const EpeStatistics best_epe_stats = save_one(
+            "best_epe", _best_epe_iteration, _best_epe, _best_epe_wepe,
+            _best_epe_cps, _best_epe_mask, _best_epe_imaging);
+        std::cout << std::fixed << std::setprecision(6)
+                  << "  Maximum EPE       | best_wEPE: " << best_wepe_stats.maximum
+                  << " nm | best_EPE: " << best_epe_stats.maximum << " nm\n";
     }
     // 功能：对每个主图形控制点执行 x+/x-/y+/y- 四种扰动和成像，
     //       用中心差分构建行对应 EP、列对应控制点的 X/Y MEEF 矩阵。
@@ -1078,25 +1154,23 @@ namespace litho {
                         mask,
                         _simulator._params.resist.threshold,
                         _simulator._params.resist.alpha);
-                    EpeEvaluation epe = Loss::evaluate_epe(
-                        imaging_result.aerial_image,
-                        _eps_result.eps,
-                        _simulator._params.resist.threshold,
-                        _simulator._params.system.pixel_size_nm);
+                    const Eigen::RowVectorXd epe = evaluate_meef_epe_vector(
+                        imaging_result.aerial_image, _eps_result, _simulator._params.resist.threshold,
+                        _simulator._params.system.pixel_size_nm, _config.epe_mode);
 
                     // 每个任务只写一个确定的矩阵行，其他线程写不同的行/方向，
                     // 因此不需要互斥锁。四个临时矩阵分别保存四种扰动结果。
                     if (move_x) {
                         if (signed_delta > 0.0) {
-                            epe_x_plus.row(col_idx) = epe.epe_vector;
+                            epe_x_plus.row(col_idx) = epe;
                         } else {
-                            epe_x_minus.row(col_idx) = epe.epe_vector;
+                            epe_x_minus.row(col_idx) = epe;
                         }
                     } else {
                         if (signed_delta > 0.0) {
-                            epe_y_plus.row(col_idx) = epe.epe_vector;
+                            epe_y_plus.row(col_idx) = epe;
                         } else {
-                            epe_y_minus.row(col_idx) = epe.epe_vector;
+                            epe_y_minus.row(col_idx) = epe;
                         }
                     }
                 } catch (const std::exception& e) {
@@ -1191,12 +1265,28 @@ namespace litho {
             _simulator._params.resist.alpha);
         const auto& baseline_fields = baseline_imaging.get_electric_field();
 
-        const Eigen::MatrixXd aerial_dx =
-            LevelSetUtils::_gradient_1d(baseline_result.aerial_image, 1.0, 1);
-        const Eigen::MatrixXd aerial_dy =
-            LevelSetUtils::_gradient_1d(baseline_result.aerial_image, 1.0, 0);
-        const Eigen::MatrixXd aerial_gradient_magnitude =
-            (aerial_dx.array().square() + aerial_dy.array().square()).sqrt();
+        const bool subpixel_epe = _config.epe_mode == "subpixel";
+        const bool pytorch_epe = _config.epe_mode == "pytorch";
+        Eigen::MatrixXd aerial_dx, aerial_dy;
+        if (pytorch_epe) {
+            const SobelGradientMaps sobel = sobel_gradient_maps(baseline_result.aerial_image);
+            aerial_dx = sobel.x;
+            aerial_dy = sobel.y;
+        } else {
+            aerial_dx = LevelSetUtils::_gradient_1d(baseline_result.aerial_image, 1.0, 1);
+            aerial_dy = LevelSetUtils::_gradient_1d(baseline_result.aerial_image, 1.0, 0);
+        }
+        const Eigen::MatrixXd aerial_gradient_magnitude = (aerial_dx.array().square() + aerial_dy.array().square()).sqrt();
+        const Eigen::MatrixXd subpixel_gradient_magnitude = aerial_gradient_magnitude.array().max(1e-6).matrix();
+        std::vector<BilinearStencil> ep_stencils;
+        if (subpixel_epe || pytorch_epe) {
+            ep_stencils.reserve(num_eps);
+            for (int ep = 0; ep < num_eps; ++ep) {
+                ep_stencils.push_back(make_bilinear_stencil(
+                    baseline_result.aerial_image.rows(), baseline_result.aerial_image.cols(),
+                    _eps_result.eps(ep, 0), _eps_result.eps(ep, 1)));
+            }
+        }
 
         int worker_count = 1;
 #ifdef _OPENMP
@@ -1243,16 +1333,65 @@ namespace litho {
                     const Eigen::MatrixXd dI_dy =
                         directional_imaging.compute_aerial_directional_derivative(
                             mask_derivative.dy, baseline_fields);
-                    const Eigen::MatrixXd dIx_dx =
-                        LevelSetUtils::_gradient_1d(dI_dx, 1.0, 1);
-                    const Eigen::MatrixXd dIy_dx =
-                        LevelSetUtils::_gradient_1d(dI_dx, 1.0, 0);
-                    const Eigen::MatrixXd dIx_dy =
-                        LevelSetUtils::_gradient_1d(dI_dy, 1.0, 1);
-                    const Eigen::MatrixXd dIy_dy =
-                        LevelSetUtils::_gradient_1d(dI_dy, 1.0, 0);
+                    Eigen::MatrixXd dIx_dx, dIy_dx, dIx_dy, dIy_dy;
+                    if (pytorch_epe) {
+                        const SobelGradientMaps sobel_dx = sobel_gradient_maps(dI_dx);
+                        const SobelGradientMaps sobel_dy = sobel_gradient_maps(dI_dy);
+                        dIx_dx = sobel_dx.x;
+                        dIy_dx = sobel_dx.y;
+                        dIx_dy = sobel_dy.x;
+                        dIy_dy = sobel_dy.y;
+                    } else {
+                        dIx_dx = LevelSetUtils::_gradient_1d(dI_dx, 1.0, 1);
+                        dIy_dx = LevelSetUtils::_gradient_1d(dI_dx, 1.0, 0);
+                        dIx_dy = LevelSetUtils::_gradient_1d(dI_dy, 1.0, 1);
+                        dIy_dy = LevelSetUtils::_gradient_1d(dI_dy, 1.0, 0);
+                    }
+
+                    Eigen::MatrixXd d_gradient_dx, d_gradient_dy;
+                    if (subpixel_epe) {
+                        // 新 EPE 先在像素上计算并截断 |grad I|，再对该场做双线性插值；
+                        // 低于下限的像素导数为 0。
+                        const Eigen::ArrayXXd active = (aerial_gradient_magnitude.array() > 1e-6).cast<double>();
+                        d_gradient_dx = (active * (aerial_dx.array() * dIx_dx.array() + aerial_dy.array() * dIy_dx.array()) /
+                                         subpixel_gradient_magnitude.array()).matrix();
+                        d_gradient_dy = (active * (aerial_dx.array() * dIx_dy.array() + aerial_dy.array() * dIy_dy.array()) /
+                                         subpixel_gradient_magnitude.array()).matrix();
+                    } else if (pytorch_epe) {
+                        // epe.py 直接对未截断 Sobel 幅值求导；零梯度像素的幅值方向导数取 0。
+                        const Eigen::ArrayXXd active = (aerial_gradient_magnitude.array() > 0.0).cast<double>();
+                        const Eigen::ArrayXXd safe_magnitude = aerial_gradient_magnitude.array().max(1e-30);
+                        d_gradient_dx = (active * (aerial_dx.array() * dIx_dx.array() + aerial_dy.array() * dIy_dx.array()) /
+                                         safe_magnitude).matrix();
+                        d_gradient_dy = (active * (aerial_dx.array() * dIx_dy.array() + aerial_dy.array() * dIy_dy.array()) /
+                                         safe_magnitude).matrix();
+                    }
 
                     for (int ep = 0; ep < num_eps; ++ep) {
+                        if (subpixel_epe || pytorch_epe) {
+                            // 旧 subpixel 模式跳过 inactive 候选点；pytorch 模式的每个点都是有效 EP。
+                            if (subpixel_epe && _eps_result.weight_epe(ep) <= 0.0) continue;
+                            const BilinearStencil& stencil = ep_stencils[ep];
+                            const double residual = bilinear_sample(baseline_result.aerial_image, stencil) - threshold;
+                            const double residual_sign = residual > 0.0 ? 1.0 : (residual < 0.0 ? -1.0 : 0.0);
+                            const double denominator = pytorch_epe ? bilinear_sample(aerial_gradient_magnitude, stencil) + kPytorchEpeEpsilon
+                                                                 : bilinear_sample(subpixel_gradient_magnitude, stencil);
+
+                            // pytorch 模式对 signed delta_nm 求导；旧 subpixel 模式保持对绝对 EPE 求导。
+                            auto epe_direction = [&](const Eigen::MatrixXd& dI, const Eigen::MatrixXd& d_gradient) {
+                                const double dI_ep = bilinear_sample(dI, stencil);
+                                const double d_gradient_ep = bilinear_sample(d_gradient, stencil);
+                                if (pytorch_epe) {
+                                    return pixel_size * (dI_ep / denominator - residual * d_gradient_ep / (denominator * denominator));
+                                }
+                                return pixel_size * (residual_sign * dI_ep / denominator -
+                                                     std::abs(residual) * d_gradient_ep / (denominator * denominator));
+                            };
+                            result.mx(ep, col_idx) = std::round(epe_direction(dI_dx, d_gradient_dx) * 1e6) / 1e6;
+                            result.my(ep, col_idx) = std::round(epe_direction(dI_dy, d_gradient_dy) * 1e6) / 1e6;
+                            continue;
+                        }
+
                         const int row = std::clamp(
                             static_cast<int>(_eps_result.eps(ep, 0)),
                             0,
@@ -1547,7 +1686,8 @@ namespace litho {
             Imaging_Result imaging;
             double epe = 0.0;
             double wepe = 0.0;
-            Eigen::RowVectorXd epe_vector;
+            Eigen::RowVectorXd epe_vector; // 用于显示 mean/max 的逐点绝对 EPE，单位 nm。
+            Eigen::RowVectorXd solve_epe_vector; // MEEF 右端项；pytorch 模式保存有符号 delta_nm。
             double pe = 0.0;
         };
 
@@ -1556,13 +1696,21 @@ namespace litho {
             EvaluatedState state;
             state.mask = mask;
             state.imaging = imaging.compute(mask, threshold, alpha);
-            EpeEvaluation epe = Loss::evaluate_epe(
-                state.imaging.aerial_image,
-                _eps_result.eps,
-                threshold,
-                pixel_size);
-            state.epe = epe.total_epe;
-            state.epe_vector = std::move(epe.epe_vector);
+            state.epe_vector = evaluate_all_epe_vector(
+                state.imaging.aerial_image, _eps_result, threshold, pixel_size, _config.epe_mode);
+            if (_config.epe_mode == "pytorch") {
+                // epe.py 的优化量是有符号 delta_nm；显示的 mean/max EPE 仍使用其绝对值。
+                state.solve_epe_vector = evaluate_meef_epe_vector(
+                    state.imaging.aerial_image, _eps_result, threshold, pixel_size, _config.epe_mode);
+            } else {
+                state.solve_epe_vector = state.epe_vector;
+            }
+            if (_config.epe_mode == "subpixel") {
+                for (int ep = 0; ep < state.solve_epe_vector.size(); ++ep) {
+                    if (_eps_result.weight_epe(ep) <= 0.0) state.solve_epe_vector(ep) = 0.0;
+                }
+            }
+            state.epe = state.epe_vector.sum();
             state.wepe = Loss::weighted_epe(
                 wepe_weight, state.epe_vector);
             state.pe = Loss::pe_loss(
@@ -1751,18 +1899,20 @@ namespace litho {
             apply_meef_weight(meef_matrix.my);
 
             // 使用 SVD 求解每个控制点的 x、y 位移。
-            const Eigen::RowVectorXd e0 = current.epe_vector;
+            // MEEF 只拟合 WEP；inactive 候选位置在 solve_epe_vector 和矩阵对应行中均为 0。
+            const Eigen::RowVectorXd e0 = current.solve_epe_vector;
             double lambda_x = 0;
             // const double lambda_x = _find_truelambadas(meef_matrix.mx, e0);
-            Eigen::VectorXd delta_x = _SVD_get_delta(
-                meef_matrix.mx, e0, lambda_x);
+            // e0 的单位是 nm，MEEF 的单位是 nm/pixel，因此线性系统直接解出的控制点位移单位是 pixel。
+            Eigen::VectorXd delta_x = _SVD_get_delta(meef_matrix.mx, e0, lambda_x);
             // const double lambda_y = _find_truelambadas(meef_matrix.my, e0);
 
             double lambda_y = 0;
-            Eigen::VectorXd delta_y = _SVD_get_delta(
-                meef_matrix.my, e0, lambda_y);
-            delta_x = (delta_x.array() * 1e6).round() / 1e6;
-            delta_y = (delta_y.array() * 1e6).round() / 1e6;
+            Eigen::VectorXd delta_y = _SVD_get_delta(meef_matrix.my, e0, lambda_y);
+            delta_x = (delta_x.array() * 1e6).round() / 1e6 / pixel_size;
+            delta_y = (delta_y.array() * 1e6).round() / 1e6 / pixel_size;
+            // delta_x = (delta_x.array() * 1e6).round() / 1e6;
+            // delta_y = (delta_y.array() * 1e6).round() / 1e6;
             Eigen::VectorXd delta_d =
                 (delta_x.array().square() + delta_y.array().square()).sqrt();
             const double step_max = delta_d.size() > 0 ? delta_d.maxCoeff() : 0.0;

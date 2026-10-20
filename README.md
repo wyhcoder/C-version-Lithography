@@ -201,13 +201,14 @@ meef:
 
 ```yaml
 meef:
+  epe_mode: "pytorch"             # pytorch / subpixel / legacy
   curve_type: "BS"               # 主图形：OA / BZ / BS
   sraf_curve_type: "CR"          # 固定 SRAF：OA / BS / CR
   rasterizer: "msaa"             # msaa / dirac
   msaa_level: 16                 # 4 / 16 / 64
   delta: 0.15
-  interval_line: 5
-  interval_corner: 2
+  interval_line: 1.0
+  interval_corner: 0.5
   mid_weight: 4.0
   other_weight: 4.0
   wepe_all_eps: true
@@ -215,6 +216,10 @@ meef:
   epe_histogram_bin_width_nm: 0.25
 ```
 
+- `epe_mode: pytorch`：对齐 `edge_sampling.py` 和 `epe.py`；扫描水平/垂直边段，所有输出点均为 EP，并使用未归一化 Sobel、双线性采样及 nm² 平方目标。
+- `pytorch` 模式把全部输出点的 `weight_epe` 和 `weight_meef` 固定为 1，候选点/WEP 筛选参数不再改变点集。
+- `epe_mode: subpixel`：保留原来的 0.5 等值线候选点/WEP 选择和中心差分 EPE。
+- `epe_mode: legacy`：保留原来的整数 EP 选择和整数像素 EPE 计算，便于复现实验。
 - `wepe_all_eps: true`：所有已选择 EP 的 `weight_epe=1`。
 - `wepe_all_eps: false`：只有关键 EP 的 `weight_epe=1`，其他 EP 权重为 0。
 - `optimize_wepe_only: true`：MEEF 方程只使用计入 WEPE 的 EP 行。

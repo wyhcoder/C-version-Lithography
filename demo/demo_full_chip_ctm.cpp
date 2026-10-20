@@ -2,6 +2,7 @@
 #include "full_chip_imaging_compare.h"
 #include "imbinarize.h"
 #include "lithography_simulator.h"
+#include "console_log.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <yaml-cpp/yaml.h>
@@ -12,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -37,6 +39,8 @@ void save_mask(const Eigen::MatrixXd& mask, const Eigen::MatrixXd& binary_mask, 
 }
 
 int main(int argc, char** argv) {
+    // 放在 try 外，使 catch 中输出的异常信息也能写入日志。
+    std::unique_ptr<ConsoleLog> console_log;
     try {
         if (argc > 1 && std::string(argv[1]) == "--help") {
             std::cout << "Usage: demo_full_chip_ctm [config.yaml] [iterations] [learning_rate] [target.bmp]\n";
@@ -50,11 +54,16 @@ int main(int argc, char** argv) {
         const fs::path target_path = config.parent_path() / (argc > 4 ? argv[4] : full["target_path"].as<std::string>());
         fs::path output = config.parent_path() / full["output_dir"].as<std::string>();
         if (argc > 4) output = output.parent_path() / target_path.stem();
+        // 结果目录在成像准备前创建，让 SOCS 信息和后续优化过程都自动保存。
+        fs::create_directories(output);
+        const fs::path log_path = output / "console_output.log";
+        console_log = std::make_unique<ConsoleLog>(log_path);
+        std::cout << "Console log: " << log_path << std::endl;
         const cv::Mat input = cv::imread(target_path.string(), cv::IMREAD_GRAYSCALE);
         Eigen::MatrixXd target(input.rows, input.cols);
         for (int y = 0; y < input.rows; ++y) {
             for (int x = 0; x < input.cols; ++x) target(y, x) = input.at<unsigned char>(y, x) / 255.0;
-        }
+        } // 读取目标图案，转换为 [0,1] 范围的 double 矩阵
         // 生成全图分块信息，包含每个 Micro 的位置、尺寸、Halo 与 Guard。以及对应的邻里关系等等
         const auto meta = Partition::build(input.rows, input.cols, full["grid_rows"].as<int>(), full["grid_cols"].as<int>(),
                                            full["halo"].as<int>(), full["guard"].as<int>());
@@ -63,9 +72,11 @@ int main(int argc, char** argv) {
         const auto& coords = grid.grid_coords();
         const Pupil pupil(LithographySimulator::_make_pupil_params(params), coords.Fx_2d, coords.Fy_2d);
         const Source source(LithographySimulator::_make_source_params(params, coords.Fx_1d));
-        const LithoPrepare prepare(grid, pupil, source, true);
+        const LithoPrepare prepare(grid, pupil, source, true, true); // use_socs=true, compact_socs=true
+        // full_chip_ctm 优化器初始化
         FullChipCTMOptimizer optimizer(meta, prepare.cache(), params.resist.threshold, params.resist.alpha);
         FullChipCTMOptions options;
+        // 命令行参数覆盖配置文件中的迭代次数和步长；其他参数仍沿用配置文件。
         options.iterations = argc > 2 ? std::stoi(argv[2]) : full["iterations"].as<int>();
         options.learning_rate = argc > 3 ? std::stod(argv[3]) : full["learning_rate"].as<double>();
         options.parallel_micro = full["parallel_micro"].as<bool>();
@@ -90,25 +101,25 @@ int main(int argc, char** argv) {
         gradient.fusion_weight_neighbor = full["fusion_weight_neighbor"].as<double>();
         std::cout << "Full-chip CTM: " << input.rows << 'x' << input.cols << ", " << meta.tiles.size()
                   << " Micro, tile=" << meta.tile_size << ", iterations=" << options.iterations
-                  << ", theta step=" << options.learning_rate << std::endl;
+                  << ", theta step=" << options.learning_rate << "\n";
         const auto start = std::chrono::steady_clock::now();
         const auto result = optimizer.optimize(target, options);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-        fs::create_directories(output);
-        // 沿用当前入口设置：峰值最低强度/分位数 0.05，面积阈值/最小间距均为 5 像素。
+        // 沿用当前入口设置：峰值最低强度/分位数 0.125/0.1，面积阈值/最小间距均为 5 像素。
         const auto binary_result = Imbinarize::binarize_advanced(result.global_mask, target, 0.125, 0.1, 5, 5);
         save_mask(result.global_mask, binary_result.final_mask, output);
         cv::imwrite((output / "target.bmp").string(), input);
         std::ofstream history(output / "history.csv");
         // 原始值与加权贡献分开，CSV 与终端日志共用同一轮、同一套损失窗口。
         history << "iteration,loss,data_loss,cept_loss,pe_contribution,penalty_contribution,epe_contribution,cept_contribution,"
-                << "pe_loss_raw,bg_penalty_raw,epe_loss_raw\n"
+                << "pe_loss_raw,bg_penalty_raw,epe_squared_pixel,epe_abs_sum_nm,epe_point_count\n"
                 << std::setprecision(17);
         for (const auto& row : result.history) {
             history << row.iteration << ',' << row.loss << ',' << row.data_loss << ',' << row.cept_loss
                     << ',' << row.pe_contribution << ',' << row.penalty_contribution
                     << ',' << row.epe_contribution << ',' << row.cept_contribution
-                    << ',' << row.pe_loss_raw << ',' << row.bg_penalty_raw << ',' << row.epe_loss_raw << '\n';
+                    << ',' << row.pe_loss_raw << ',' << row.bg_penalty_raw << ',' << row.epe_loss_raw
+                    << ',' << row.epe_abs_sum_nm << ',' << row.epe_point_count << '\n';
         }
         // 输出图像对应最佳轮；独立记录最佳轮与末轮，history 仍保留整个优化轨迹。
         std::ofstream summary(output / "summary.csv");
