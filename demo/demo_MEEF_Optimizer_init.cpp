@@ -422,7 +422,10 @@ int main(int argc, char** argv) {
                   << optimizer.evaluation_point_count() << " x "
                   << optimizer.main_control_point_count()
                   << "（行=EP 点，列=主图形控制点）\n";
-
+        if (optimizer.evaluation_point_count() < optimizer.main_control_point_count()) {
+            std::cerr << "[error] EP 点数少于主图形控制点数，MEEF 矩阵欠定，程序终止。\n";
+            return EXIT_FAILURE;
+        }
         const auto task_start = t3;
         auto task_end = task_start;
         std::string task_label = "init-only";

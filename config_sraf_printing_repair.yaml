@@ -1,0 +1,28 @@
+# 逐块修复 SRAF printing，长度用 pixel，EPE 用 nm，强度沿用源成像模型的归一化。
+# 相对路径均相对于项目根目录解析，源目录内包含曲线、图像、EP 和实际使用的光学配置。
+source_dir: result/MEEF_result/matrix_0003
+snapshot: best_wepe # 在源目录下选择 best_wepe 或 best_epe 快照。
+output_dir: result/printing_repair/matrix_0003_normal_gradient # 固定目录，重复运行覆盖同名输出，不自动追加版本号。
+
+repair:
+  mode: single_sraf_normal_gradient # 法向差分梯度；原几何方法为 single_sraf_multi_pair。
+  # 直接按连续 AI>源配置中的 resist.threshold 检测 printing，WI 仅用于保存和绘图。
+  intensity_margin: 0.1       # 本块停止目标和损失中的强度目标均为 threshold-本值，直接使用 AI。
+  normal_gradient:
+    fd_step_px: 0.05            # 每个控制点沿当前法线向内/向外扰动的距离，单位 pixel。
+    learning_rate: 1000.0      # 请求位移=min(max(0,-本值*梯度),step_px)，几何上只要求闭合且不自交。
+  # 下列点对参数只用于原几何方法，梯度方法不依赖最宽点对选点。
+  pair_groups:
+    maximum_pairs: 4             # 每轮最多 4 组，默认不共享控制点。
+    minimum_center_spacing_px: 1.0 # 中点接近且方向近似相同的截面去重，像素。
+  max_iterations: 80           # 全局循环上限，包含结束当前块和选择下一块的检查轮次。
+  max_iterations_per_sraf: 40  # 当前块接受的更新轮数上限，完成或停止后才切换下一块。
+  step_px: 0.5                 # 每轮最大内法线位移，像素；失败时依次减半。
+  max_backtracks: 6            # 更新失败时的减半次数上限；差分曲线无效时也按此上限重试。
+  width_threshold_px: 6.0      # 仅几何方法：筛选最宽截面直径、法线材料厚度及点对距离，像素。
+  minimum_width_px: 3.0        # 仅原几何方法：单侧位移不超过 0.45*(有效宽度-本值)，单位 pixel。
+  target_guard_px: 3           # 主图形排除带半径，包含每轴 [-3,3] pixel，独立 AI 超阈值区域额外保留。
+  max_mean_epe_increase_nm: 0.05 # 仅原几何方法：平均绝对 EPE 增量上限，nm；梯度方法仅记录 EPE。
+  max_max_epe_increase_nm: 0.25  # 仅原几何方法：最大绝对 EPE 增量上限，nm。
+  max_added_sraf_area_px: 0.25   # 仅原几何方法：相对初始材料的新增覆盖面积上限，单位 pixel²。
+  snapshot_tolerance: 0.00002   # 重绘/重新成像与保存快照的一致性容差，绝对数值。

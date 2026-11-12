@@ -1,11 +1,11 @@
 # 共用图案名；修改一次即可同步 mask 和 MEEF。
-PATTERN_NAME: &PATTERN_NAME "matrix_0001"
+PATTERN_NAME: &PATTERN_NAME "工字型"
 
 # 成像模型
 system:
   wavelength_nm: 193.0
-  pixel_size_nm: 6.0
-  grid_size_pixel: 257       # 实际空间/FFT/mask 边长（像素）；256、257 等奇偶尺寸均自动处理
+  pixel_size_nm: 4.0
+  grid_size_pixel: 512       # 实际空间/FFT/mask 边长（像素）；256、257 等奇偶尺寸均自动处理
 
 mask:
   image_name: *PATTERN_NAME
@@ -37,10 +37,10 @@ ctm:
 # MEEF 优化：路径均相对于项目根目录。
 meef:
   # 运行与输出
-  output_dir: "result/MEEF_result/matrix-0001"
+  output_dir: "result/MEEF_result/matrix_0010"
   config_snapshot_name: "config_used.yaml"
   console_log_name: "console_output.log"
-  lsm_mask_path: "assets/lsm_mask/0000_matrix_0001.txt" # "result/LSM_result/LSM_mask.txt" assets/lsm_mask/0009_matrix_0010.txt
+  lsm_mask_path: "assets/lsm_mask/matrix_0010.txt" # "result/LSM_result/LSM_mask.txt" assets/lsm_mask/0009_matrix_0010.txt
   run_mode: "--optimize"           # --init-only / --build-meef / --optimize
   pattern_name: *PATTERN_NAME
 

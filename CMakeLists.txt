@@ -173,6 +173,7 @@ add_library(litho_core STATIC
     source/utils/simulation_parameters.cpp
     source/utils/sraf_geometry.cpp
     source/utils/sraf_curve.cpp
+    source/utils/sraf_printing_repair.cpp
 
     # 仿真器及优化算法
     source/litho_model/lithography_simulator.cpp
@@ -300,6 +301,10 @@ target_link_libraries(demo_SRAF_Optimizer_init litho_core)
 add_executable(demo_MEEF_Optimizer_init demo/demo_MEEF_Optimizer_init.cpp)
 target_link_libraries(demo_MEEF_Optimizer_init litho_core)
 
+# 固定已优化的主图形，仅对 printing 热点附近过宽的 SRAF 轮廓做法向内缩。
+add_executable(demo_sraf_printing_repair demo/demo_sraf_printing_repair.cpp)
+target_link_libraries(demo_sraf_printing_repair litho_core)
+
 # EPE、PV Band、FFT shift 和 MSAA 控制点的独立验证程序。
 add_executable(demo_epe demo/demo_epe.cpp)
 target_link_libraries(demo_epe litho_core)
@@ -324,6 +329,10 @@ if(BUILD_TESTING)
     add_executable(test_sraf_curve tests/test_sraf_curve.cpp)
     target_link_libraries(test_sraf_curve litho_core)
     add_test(NAME sraf_curve COMMAND test_sraf_curve)
+
+    add_executable(test_sraf_printing_repair tests/test_sraf_printing_repair.cpp)
+    target_link_libraries(test_sraf_printing_repair litho_core)
+    add_test(NAME sraf_printing_repair COMMAND test_sraf_printing_repair)
 
     add_executable(test_parametric tests/test_parametric.cpp)
     target_link_libraries(test_parametric litho_core)

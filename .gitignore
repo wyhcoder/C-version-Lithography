@@ -28,6 +28,7 @@
 !/tests/test_mask_continuity.cpp
 !/tests/test_full_chip_imaging_compare.cpp
 !/tests/test_full_chip_lsm.cpp
+!/tests/test_sraf_printing_repair.cpp
 
 # Python virtual environments, caches, and test output
 /.venv/
